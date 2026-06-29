@@ -1,10 +1,20 @@
+import os
 import json
 import sqlite3
 import requests
 import time
+from threading import Thread
+from flask import Flask
+
+app = Flask('')
+
+@app.route('/')
+def home():
+    # Render ke port scanner ko 200 OK dene ke liye mandatory route
+    return "Kunwar DMS Mega Bot is Online!", 200
 
 # ================== CONFIGURATION ==================
-TOKEN = '8644302388:AAHQ0PsApaZ6Fv11ezOS45uwAHduzERWBrw'
+TOKEN = '8644302388:AAEBx4UKSE_e7yjS5j14DHxyXeXS_HJuJUw'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
 START_IMAGE_URL = 'https://telegra.ph/file/0c968f94d3a82efda1608.jpg' 
 # ===================================================
@@ -47,7 +57,7 @@ def get_main_menu():
 def get_premium_menu():
     return {"inline_keyboard": [
         [{"text": f"1 Day — ₹{get_setting('price_1d')}", "callback_data": "pay_1d"}],
-        [{"text": f"3 Days — ₹{get_setting('price_3d')}", "callback_data": "pay_3d"}],
+        [{"text": f"3 Days — ₹{get_setting('price_3d')}", "checkpoint_data": "pay_3d"}],
         [{"text": f"7 Days — ₹{get_setting('price_7d')}", "callback_data": "pay_7d"}],
         [{"text": f"1 Month — ₹{get_setting('price_1m')}", "callback_data": "pay_1m"}],
         [{"text": f"Permanent — ₹{get_setting('price_perm')}", "callback_data": "pay_perm"}],
@@ -98,8 +108,8 @@ def process_update(update):
     except Exception as e:
         pass
 
-if __name__ == '__main__':
-    init_db()
+def run_bot_loop():
+    # Purane stuck webhooks ko clear karne ke liye
     requests.get(URL + 'deleteWebhook')
     offset = 0
     while True:
@@ -112,3 +122,9 @@ if __name__ == '__main__':
         except:
             pass
         time.sleep(1)
+
+if __name__ == '__main__':
+    init_db()
+    Thread(target=run_bot_loop).start()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
