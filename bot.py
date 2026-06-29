@@ -3,11 +3,15 @@ import json
 import requests
 import time
 import asyncio
-from threading import Thread
+import nest_asyncio
 from flask import Flask
+from threading import Thread
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetChatInviteImportersRequest
+
+# 1. Loop conflict aur double message completely khatam karne ke liye strict applied
+nest_asyncio.apply()
 
 app = Flask('')
 
@@ -84,18 +88,16 @@ payment_tracking = {}
 def send_tg_msg(chat_id, text, reply_markup=None):
     payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
     if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
-    return requests.post(URL + 'sendMessage', json=payload).json()
+    try: return requests.post(URL + 'sendMessage', json=payload).json()
+    except: return {}
 
+# 2. Raw standard task generator—jo dynamic event loop conflict nahi hone deta
 def run_isolated_engine(coro):
-    def worker():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try: loop.run_until_complete(coro)
-        finally: loop.close()
-    Thread(target=worker).start()
+    asyncio.create_task(coro)
 
 async def init_telethon_login(chat_id, phone):
-    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    loop = asyncio.get_event_loop()
+    client = TelegramClient(StringSession(), API_ID, API_HASH, loop=loop)
     await client.connect()
     try:
         send_code = await client.send_code_request(phone)
@@ -120,6 +122,7 @@ async def verify_telethon_otp(chat_id, otp):
         save_data(db)
         send_tg_msg(chat_id, f"✅ **Account Linked Successfully!**", get_main_menu(chat_id))
         user_states.pop(chat_id, None)
+        active_clients.pop(chat_id, None)
     except Exception as e:
         send_tg_msg(chat_id, f"❌ Verification Failed: {str(e)}")
     finally:
@@ -134,7 +137,9 @@ async def scrape_and_dm_join_requests(chat_id, channel_link, message_text):
         return
     send_tg_msg(chat_id, "⏳ Fetching pending join requests from channel/group...")
     s_info = user_sessions[0]
-    client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH)
+    
+    loop = asyncio.get_event_loop()
+    client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
     await client.connect()
     targets = []
     try:
@@ -151,10 +156,11 @@ async def scrape_and_dm_join_requests(chat_id, channel_link, message_text):
         send_tg_msg(chat_id, "ℹ️ No pending requests found.")
         return
     send_tg_msg(chat_id, f"🎯 Found {len(targets)} requests! Starting Campaign...")
+    
     idx = 0
     for target in targets:
         curr_session = user_sessions[idx % len(user_sessions)]
-        cl = TelegramClient(StringSession(curr_session["session"]), API_ID, API_HASH)
+        cl = TelegramClient(StringSession(curr_session["session"]), API_ID, API_HASH, loop=loop)
         await cl.connect()
         try:
             await cl.send_message(target, message_text)
@@ -174,10 +180,11 @@ async def start_mass_dm_task(chat_id, usernames, message_text):
     user_sessions = db["sessions"].get(str(chat_id), [])
     send_tg_msg(chat_id, f"🚀 **Campaign Launched!**\nTotal targets: {len(usernames)}")
     idx = 0
+    loop = asyncio.get_event_loop()
     for target in usernames:
         if not target.strip(): continue
         s_info = user_sessions[idx % len(user_sessions)]
-        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH)
+        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
         await client.connect()
         try:
             await client.send_message(target.strip(), message_text)
@@ -305,7 +312,8 @@ def process_update(update):
                 requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "✨ *MAIN PANEL* ✨", 'reply_markup': get_main_menu(chat_id)})
     except: pass
 
-def run_bot_loop():
+# 3. Webhook handling ko bypass karke continuous async long-polling logic
+async def run_bot_loop():
     requests.get(URL + 'deleteWebhook')
     offset = 0
     while True:
@@ -316,8 +324,16 @@ def run_bot_loop():
                     offset = u["update_id"] + 1
                     process_update(u)
         except: pass
-        time.sleep(1)
+        await asyncio.sleep(1)
+
+def start_flask():
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == '__main__':
-    Thread(target=run_bot_loop).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+    # Flask ko separate context container thread me bind kiya
+    Thread(target=start_flask, daemon=True).start()
+    
+    # Core loop activation
+    print("🤖 Zerox Engine Control Online...")
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run_bot_loop())
