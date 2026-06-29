@@ -1,6 +1,5 @@
 import os
 import json
-import sqlite3
 import requests
 import time
 import asyncio
@@ -13,75 +12,36 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar DMS Ultra Engine is Live!", 200
+    return "Kunwar DMS Protected Premium Engine is Active!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAGRKZzOsnXUdVF4AnaWHQRI1OHQCDpSLj0'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
-ADMIN_ID = 6752542323  
+ADMIN_ID = 6752542323  # Aapki personal account ID
 
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
 # ===================================================
 
-def init_db():
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (chat_id INTEGER PRIMARY KEY, is_premium INTEGER DEFAULT 0, expiry INTEGER DEFAULT 0)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS sessions (chat_id INTEGER, phone TEXT, session_str TEXT)''')
-    conn.commit()
-    conn.close()
+# Crash-Proof Memory Storage (No SQLite Glitches)
+PREMIUM_USERS = {}  # {chat_id: expiry_timestamp}
+SAVED_SESSIONS = {} # {chat_id: [phone_numbers]}
 
-    default_settings = {
-        'upi_id': 'sapna513@ptaxis',
-        'price_1d': '10', 'price_3d': '25', 'price_7d': '50', 'price_1m': '150', 'price_perm': '299'
-    }
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    for key, value in default_settings.items():
-        cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
-
-init_db()
-
-def get_setting(key):
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE key=?", (key,))
-    res = cursor.fetchone()
-    conn.close()
-    return res[0] if res else "Not Set"
-
-def set_setting(key, value):
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
-    conn.commit()
-    conn.close()
+# Static Settings
+UPI_ID = 'sapna513@ptaxis'
+PRICES = {'1d': '10', '3d': '25', '7d': '50', '1m': '150', 'perm': '299'}
 
 def check_premium(chat_id):
     if int(chat_id) == int(ADMIN_ID): 
         return True
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("SELECT is_premium, expiry FROM users WHERE chat_id=?", (int(chat_id),))
-    res = cursor.fetchone()
-    conn.close()
-    if res:
-        is_prem, expiry = res
-        if int(is_prem) == 1 and int(expiry) > int(time.time()):
+    if int(chat_id) in PREMIUM_USERS:
+        if PREMIUM_USERS[int(chat_id)] > int(time.time()):
             return True
     return False
 
 def make_premium(chat_id, days):
     expiry = int(time.time()) + (int(days) * 86400) if int(days) < 999 else int(time.time()) + (9999 * 86400)
-    conn = sqlite3.connect('bot_data.db', timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO users (chat_id, is_premium, expiry) VALUES (?, 1, ?)", (int(chat_id), expiry))
-    conn.commit()
-    conn.close()
+    PREMIUM_USERS[int(chat_id)] = expiry
 
 def get_main_menu():
     return {"inline_keyboard": [
@@ -92,11 +52,11 @@ def get_main_menu():
 
 def get_premium_menu():
     return {"inline_keyboard": [
-        [{"text": f"1 Day — ₹{get_setting('price_1d')}", "callback_data": "pay_1d"}],
-        [{"text": f"3 Days — ₹{get_setting('price_3d')}", "callback_data": "pay_3d"}],
-        [{"text": f"7 Days — ₹{get_setting('price_7d')}", "callback_data": "pay_7d"}],
-        [{"text": f"1 Month — ₹{get_setting('price_1m')}", "callback_data": "pay_1m"}],
-        [{"text": f"Permanent — ₹{get_setting('price_perm')}", "callback_data": "pay_perm"}],
+        [{"text": f"1 Day — ₹{PRICES['1d']}", "callback_data": "pay_1d"}],
+        [{"text": f"3 Days — ₹{PRICES['3d']}", "callback_data": "pay_3d"}],
+        [{"text": f"7 Days — ₹{PRICES['7d']}", "callback_data": "pay_7d"}],
+        [{"text": f"1 Month — ₹{PRICES['1m']}", "callback_data": "pay_1m"}],
+        [{"text": f"Permanent — ₹{PRICES['perm']}", "callback_data": "pay_perm"}],
         [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
     ]}
 
@@ -125,7 +85,7 @@ async def init_telethon_login(chat_id, phone):
         user_states[chat_id] = 'expecting_otp'
         send_tg_msg(chat_id, "📩 **OTP Sent!** Please check your Telegram app and enter it here:")
     except Exception as e:
-        send_tg_msg(chat_id, f"❌ Failed: {str(e)}")
+        send_tg_msg(chat_id, f"❌ Failed to send OTP: {str(e)}")
         user_states.pop(chat_id, None)
         await client.disconnect()
 
@@ -137,22 +97,24 @@ async def verify_telethon_otp(chat_id, otp):
         await client.sign_in(data['phone'], code=otp, phone_code_hash=data['phone_code_hash'])
         from telethon.sessions import StringSession
         string_session = StringSession.save(client.session)
-        conn = sqlite3.connect('bot_data.db', timeout=10)
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO sessions (chat_id, phone, session_str) VALUES (?, ?, ?)", (chat_id, data['phone'], str(string_session)))
-        conn.commit()
-        conn.close()
-        send_tg_msg(chat_id, f"✅ **Session Linked Successfully!**")
+        
+        if chat_id not in SAVED_SESSIONS:
+            SAVED_SESSIONS[chat_id] = []
+        SAVED_SESSIONS[chat_id].append(data['phone'])
+        
+        send_tg_msg(chat_id, f"✅ **Session Linked Successfully!**\nNumber: `{data['phone']}`")
         user_states.pop(chat_id, None)
     except SessionPasswordNeededError:
         user_states[chat_id] = 'expecting_2fa'
         send_tg_msg(chat_id, "🔒 **Enter 2FA Password:**")
     except Exception as e:
         send_tg_msg(chat_id, f"❌ Failed: {str(e)}")
+        user_states.pop(chat_id, None)
     finally:
         if user_states.get(chat_id) != 'expecting_2fa': await client.disconnect()
 
 def process_update(update):
+    global UPI_ID
     try:
         if "message" in update:
             msg = update["message"]
@@ -165,22 +127,24 @@ def process_update(update):
                     send_tg_msg(chat_id, "✨ *KUNWAR DMS INCREASER* ✨\n\nChoose an option below.", get_main_menu())
                     return
 
+                # ADMIN GATEWAY
                 if text == "/admin" and int(chat_id) == int(ADMIN_ID):
-                    send_tg_msg(chat_id, f"⚙️ *Admin Panel*\n\n/approve [User_ID] [Days]\n/setupupi [ID]")
+                    send_tg_msg(chat_id, f"⚙️ *Admin Panel*\n\nUsage:\n`/approve USER_ID DAYS`\n`/setupupi NEW_UPI`")
                     return
                 elif text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
                     parts = text.split(" ")
-                    target_user = parts[1].strip()
-                    target_days = parts[2].strip()
+                    target_user = int(parts[1].strip())
+                    target_days = int(parts[2].strip())
                     make_premium(target_user, target_days)
-                    send_tg_msg(ADMIN_ID, f"✅ Approved ID `{target_user}`")
-                    send_tg_msg(int(target_user), f"🎉 **Premium Activated!** Admin approved your account.")
+                    send_tg_msg(ADMIN_ID, f"✅ Successfully Approved ID `{target_user}` for {target_days} days.")
+                    send_tg_msg(target_user, f"🎉 **Premium Activated!** Admin approved your account tools.")
                     return
                 elif text.startswith("/setupupi ") and int(chat_id) == int(ADMIN_ID):
-                    set_setting('upi_id', text.split(" ", 1)[1])
-                    send_tg_msg(chat_id, f"✅ UPI updated.")
+                    UPI_ID = text.split(" ", 1)[1].strip()
+                    send_tg_msg(chat_id, f"✅ Global UPI updated to: `{UPI_ID}`")
                     return
 
+                # USER WORKFLOW
                 if chat_id in user_states:
                     state = user_states[chat_id]
                     if state == 'expecting_phone':
@@ -195,6 +159,7 @@ def process_update(update):
                         send_tg_msg(chat_id, "⏳ **UTR Saved!** Now please send/upload the **Payment Screenshot** here:")
                         return
 
+            # PHOTO CAPTURE FOR SCREENSHOT VERIFICATION
             if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
                 photo_file_id = msg["photo"][-1]["file_id"]
                 plan_data = payment_tracking.get(chat_id, {})
@@ -218,7 +183,7 @@ def process_update(update):
                 requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "💎 *Premium Plans*", 'parse_mode': 'Markdown', 'reply_markup': get_premium_menu()})
             elif data.startswith("pay_"):
                 plan_type = data.split("_")[1]
-                pay_text = f"💳 **UPI ID:** `{get_setting('upi_id')}`\nAmount: ₹{get_setting(f'price_{plan_type}')}\n\nClick **PAID ✅** after transfer."
+                pay_text = f"💳 **UPI ID:** `{UPI_ID}`\nAmount: ₹{PRICES[plan_type]}\n\nClick **PAID ✅** after transfer."
                 requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': pay_text, 'parse_mode': 'Markdown', 'reply_markup': {"inline_keyboard": [[{"text": "PAID ✅", "callback_data": f"confirm_paid_{plan_type}"}]]}})
             elif data.startswith("confirm_paid_"):
                 plan = data.split("_")[2]
@@ -227,13 +192,16 @@ def process_update(update):
                 requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
                 send_tg_msg(chat_id, "✍️ Please enter your **12-digit UTR Number**:")
             elif data == "add_session":
+                # LOCKED SUB ENGINE CONTROL
                 if not check_premium(chat_id):
                     send_tg_msg(chat_id, "❌ **Access Denied!** Buy Premium subscription first.")
                     return
                 send_tg_msg(chat_id, "📱 Enter phone number with country code:")
                 user_states[chat_id] = 'expecting_phone'
-    except Exception as e:
-        pass
+            elif data == "back_to_menu":
+                requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
+                send_tg_msg(chat_id, "✨ *KUNWAR DMS INCREASER* ✨", get_main_menu())
+    except: pass
 
 def run_bot_loop():
     requests.get(URL + 'deleteWebhook')
