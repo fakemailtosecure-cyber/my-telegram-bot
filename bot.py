@@ -17,10 +17,9 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Zerox Premium Engine Live!", 200
+    return "Zerox AntiSpam Engine Live!", 200
 
 # ================== CONFIGURATION ==================
-# ⚠️ AAPKA NAYA CONFIGURATION TOKEN SET HAI
 TOKEN = '8448000628:AAFW2q8KOvK5T_1jPRP03BfwlsZf_ebSGH4'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
 ADMIN_ID = 6752542323
@@ -33,6 +32,7 @@ DATA_FILE = 'premium_db.json'
 user_states = {}
 active_clients = {}
 processed_updates = set()
+user_click_locks = {}  # Anti-double click track karne ke liye
 http_session = requests.Session()
 
 def load_data():
@@ -78,6 +78,10 @@ def get_target_selection_menu():
         [{"text": "📥 Request Channel / Group", "callback_data": "target_by_requests"}],
         [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
     ]}
+
+def answer_callback(callback_query_id):
+    try: http_session.post(URL + 'answerCallbackQuery', json={'callback_query_id': callback_query_id})
+    except: pass
 
 def send_tg_msg(chat_id, text, reply_markup=None):
     payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
@@ -250,11 +254,22 @@ def process_update(update):
             chat_id = cq["message"]["chat"]["id"]
             msg_id = cq["message"]["message_id"]
             data = cq["data"]
+            cq_id = cq["id"]
             db = load_data()
 
+            # Instantly tell Telegram that click is processed (Removes loading spinner)
+            answer_callback(cq_id)
+
+            # STRICT COOLDOWN: Agar user ne 1.5s me dobara click kiya toh ignores it
+            current_time = time.time()
+            if chat_id in user_click_locks and (current_time - user_click_locks[chat_id]) < 1.5:
+                return
+            user_click_locks[chat_id] = current_time
+
             if data == "set_msg":
-                user_states[chat_id] = 'expecting_msg_text'
-                send_tg_msg(chat_id, "📝 Send your message text for campaign:")
+                if user_states.get(chat_id) != 'expecting_msg_text':
+                    user_states[chat_id] = 'expecting_msg_text'
+                    send_tg_msg(chat_id, "📝 Send your message text for campaign:")
             elif data == "preview_msg":
                 msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
                 send_tg_msg(chat_id, f"📋 **Your Message:**\n\n{msg_text}")
@@ -268,8 +283,9 @@ def process_update(update):
                 if not check_premium(chat_id):
                     send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
                     return
-                user_states[chat_id] = 'expecting_phone'
-                send_tg_msg(chat_id, "📱 Enter phone number with country code:")
+                if user_states.get(chat_id) != 'expecting_phone':
+                    user_states[chat_id] = 'expecting_phone'
+                    send_tg_msg(chat_id, "📱 Enter phone number with country code:")
             elif data == "start_dm_options":
                 if not check_premium(chat_id):
                     send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
@@ -279,11 +295,13 @@ def process_update(update):
                     return
                 edit_tg_msg(chat_id, msg_id, "🎯 **Select Target Type:**", get_target_selection_menu())
             elif data == "target_by_list":
-                user_states[chat_id] = 'expecting_targets'
-                send_tg_msg(chat_id, "📝 Send username list (one username per line):")
+                if user_states.get(chat_id) != 'expecting_targets':
+                    user_states[chat_id] = 'expecting_targets'
+                    send_tg_msg(chat_id, "📝 Send username list (one username per line):")
             elif data == "target_by_requests":
-                user_states[chat_id] = 'expecting_channel_link'
-                send_tg_msg(chat_id, "📥 Send your channel/group invite link:")
+                if user_states.get(chat_id) != 'expecting_channel_link':
+                    user_states[chat_id] = 'expecting_channel_link'
+                    send_tg_msg(chat_id, "📥 Send your channel/group invite link:")
             elif data == "logout_session":
                 if str(chat_id) in db["sessions"]:
                     db["sessions"].pop(str(chat_id))
@@ -296,7 +314,6 @@ def process_update(update):
     except: pass
 
 async def run_bot_loop():
-    # Strict dynamic clearing of previous webhook configurations
     http_session.get(URL + 'deleteWebhook')
     offset = 0
     while True:
@@ -311,6 +328,6 @@ async def run_bot_loop():
 
 if __name__ == '__main__':
     Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
-    print("🚀 Fresh Isolated Zerox Engine Started...")
+    print("🚀 AntiSpam Engine Loaded...")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(run_bot_loop())
