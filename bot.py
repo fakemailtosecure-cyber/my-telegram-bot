@@ -60,7 +60,7 @@ def get_main_menu(chat_id):
         [{"text": "✉️ Set Message", "callback_data": "set_msg"}, {"text": "📋 Preview Message", "callback_data": "preview_msg"}],
         [{"text": "📊 My Stats", "callback_data": "my_stats"}, {"text": "👤 My Account", "callback_data": "my_account"}],
         [{"text": "👑 VIP Premium", "callback_data": "premium_plans"}],
-        [{"text": "➕ Add Account", "callback_data": "add_session"}, {"text": "➖ Remove Account", "logout_session"}],
+        [{"text": "➕ Add Account", "callback_data": "add_session"}, {"text": "➖ Remove Account", "callback_data": "logout_session"}],
         [{"text": f"Campaign Text Status: {msg_status}", "callback_data": "none"}]
     ]}
 
