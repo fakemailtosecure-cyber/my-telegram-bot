@@ -3,10 +3,6 @@ import json
 import sqlite3
 import requests
 import time
-from threading import Thread
-from flask import Flask, request
-
-app = Flask('')
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAHQ0PsApaZ6Fv11ezOS45uwAHduzERWBrw'
@@ -73,7 +69,6 @@ def process_update(update):
                 requests.post(URL + 'sendPhoto', json={'chat_id': chat_id, 'photo': START_IMAGE_URL, 'caption': welcome, 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
             
             elif text == "/admin":
-                # Abhi ke liye bypass lagaya hai taaki aapko panel dikhe aur config handle ho
                 admin_text = f"⚙️ *Admin Control Panel*\n\n**Manual UPI:** `{get_setting('upi_id')}`\n\nCommands:\n/setupupi [ID]\n/setprice1d [Price]"
                 requests.post(URL + 'sendMessage', json={'chat_id': chat_id, 'text': admin_text, 'parse_mode': 'Markdown'})
                 
@@ -106,20 +101,20 @@ def process_update(update):
     except Exception as e:
         print(f"Error: {e}")
 
-# Pure Dynamic Webhook & Polling Hybrid setup
-def fallback_polling():
+if __name__ == '__main__':
+    # Webhook fasa hua clear karne ke liye force trigger
+    requests.get(URL + 'deleteWebhook')
+    print("Webhook cleared successfully.")
+    
     offset = 0
+    print("Standalone Bot Loop Started...")
     while True:
         try:
-            r = requests.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 3}).json()
+            r = requests.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 5}).json()
             if "result" in r:
                 for update in r["result"]:
                     offset = update["update_id"] + 1
                     process_update(update)
-        except: pass
+        except Exception as e:
+            print(f"Loop Error: {e}")
         time.sleep(1)
-
-if __name__ == '__main__':
-    Thread(target=fallback_polling).start()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
