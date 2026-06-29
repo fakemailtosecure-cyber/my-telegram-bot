@@ -18,7 +18,7 @@ def home():
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAHB5P1EPHhByrqay9u7hAuWIFt-4jWEIKc'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
-ADMIN_ID = 6752542323
+ADMIN_ID = 6752542323  # Thor Bhai Ki ID
 
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
@@ -52,7 +52,7 @@ def make_premium(chat_id, days):
     data["premium"][str(chat_id)] = expiry
     save_data(data)
 
-# FULL PANEL KEYBOARD (As requested in 59343_2.jpg)
+# FULL PANEL KEYBOARD
 def get_main_menu(chat_id):
     data = load_data()
     msg_set = "✅ Message Set" if str(chat_id) in data["messages"] else "✉️ No Message Set"
@@ -85,7 +85,7 @@ def send_tg_msg(chat_id, text, reply_markup=None):
     if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
     return requests.post(URL + 'sendMessage', json=payload).json()
 
-# CRITICAL FIX: THREAD-SAFE ASYNCIO ISOLATION ENGINE TO ELIMINATE LOOP CHANGED ERRORS
+# THREAD-SAFE ASYNCIO ISOLATION ENGINE TO ELIMINATE LOOP CHANGED ERRORS
 def run_isolated_async(coro):
     def worker():
         loop = asyncio.new_event_loop()
@@ -186,10 +186,20 @@ def process_update(update):
                     send_tg_msg(chat_id, "✨ *DMS FORWARD BOT CORE* ✨\nYour premium system status verified.", get_main_menu(chat_id))
                     return
 
-                if text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
+                if text == "/admin" and int(chat_id) == int(ADMIN_ID):
+                    send_tg_msg(chat_id, "⚙️ *Admin Control Command Panel*\n\n`/approve USER_ID DAYS`\n`/setupupi NEW_UPI`")
+                    return
+                elif text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
                     parts = text.split(" ")
                     make_premium(int(parts[1]), int(parts[2]))
                     send_tg_msg(ADMIN_ID, f"✅ Approved `{parts[1]}`")
+                    send_tg_msg(int(parts[1]), f"🎉 **Premium Subscription Activated!** Admin has approved your account.")
+                    return
+                elif text.startswith("/setupupi ") and int(chat_id) == int(ADMIN_ID):
+                    db = load_data()
+                    db["upi"] = text.split(" ", 1)[1].strip()
+                    save_data(db)
+                    send_tg_msg(chat_id, f"✅ Global UPI updated to: `{db['upi']}`")
                     return
 
                 if chat_id in user_states:
@@ -281,6 +291,9 @@ def process_update(update):
                 user_states[chat_id] = 'expecting_phone'
                 send_tg_msg(chat_id, "📱 Enter phone number with country code:")
             elif data == "start_dm":
+                if not check_premium(chat_id):
+                    send_tg_msg(chat_id, "❌ **Access Denied!** Buy Premium subscription first.")
+                    return
                 if str(chat_id) not in db["messages"]:
                     send_tg_msg(chat_id, "⚠️ Please 'Set Message' first before launching campaign.")
                     return
