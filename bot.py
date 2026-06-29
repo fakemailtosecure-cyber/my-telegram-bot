@@ -14,7 +14,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar Zerox Ultimate Engine Live!", 200
+    return "Kunwar Zerox Engine Live!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8448000628:AAFW2q8KOvK5T_1jPRP03BfwlsZf_ebSGH4'
@@ -24,7 +24,8 @@ API_HASH = 'b18441a1ff607e10a989891a5462e627'
 DATA_FILE = 'premium_db.json'
 # ===================================================
 
-bot = TelegramClient('bot_session', API_ID, API_HASH).start(bot_token=TOKEN)
+# Isolated client initialisation without running immediate block connections
+bot = TelegramClient('bot_session', API_ID, API_HASH)
 user_states = {}
 active_clients = {}
 
@@ -239,7 +240,12 @@ async def message_input_handler(event):
 def start_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
+async def main():
+    # Inside explicit main async wrapper task block
+    await bot.start(bot_token=TOKEN)
+    print("🤖 Telethon Loop Active and Secure...")
+    await bot.run_until_disconnected()
+
 if __name__ == '__main__':
     Thread(target=start_flask, daemon=True).start()
-    print("🤖 Telethon Native Engine Active...")
-    bot.run_until_disconnected()
+    asyncio.run(main())
