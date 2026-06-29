@@ -10,13 +10,11 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    # Render ke port scanner ko 200 OK dene ke liye mandatory route
     return "Kunwar DMS Mega Bot is Online!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAEBx4UKSE_e7yjS5j14DHxyXeXS_HJuJUw'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
-START_IMAGE_URL = 'https://telegra.ph/file/0c968f94d3a82efda1608.jpg' 
 # ===================================================
 
 def init_db():
@@ -57,7 +55,7 @@ def get_main_menu():
 def get_premium_menu():
     return {"inline_keyboard": [
         [{"text": f"1 Day — ₹{get_setting('price_1d')}", "callback_data": "pay_1d"}],
-        [{"text": f"3 Days — ₹{get_setting('price_3d')}", "checkpoint_data": "pay_3d"}],
+        [{"text": f"3 Days — ₹{get_setting('price_3d')}", "callback_data": "pay_3d"}],
         [{"text": f"7 Days — ₹{get_setting('price_7d')}", "callback_data": "pay_7d"}],
         [{"text": f"1 Month — ₹{get_setting('price_1m')}", "callback_data": "pay_1m"}],
         [{"text": f"Permanent — ₹{get_setting('price_perm')}", "callback_data": "pay_perm"}],
@@ -73,7 +71,7 @@ def process_update(update):
             
             if text == "/start":
                 welcome = "✨ *KUNWAR DMS INCREASER* ✨\n\n*Server Status:* Online 🟢\n*System:* Active\n*Security:* Enabled\n\nChoose an option below."
-                requests.post(URL + 'sendPhoto', json={'chat_id': chat_id, 'photo': START_IMAGE_URL, 'caption': welcome, 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
+                requests.post(URL + 'sendMessage', json={'chat_id': chat_id, 'text': welcome, 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
             
             elif text == "/admin":
                 admin_text = f"⚙️ *Admin Control Panel*\n\n**Manual UPI:** `{get_setting('upi_id')}`\n\nCommands:\n/setupupi [ID]\n/setprice1d [Price]"
@@ -97,19 +95,16 @@ def process_update(update):
                 plan_type = data.split("_")[1]
                 upi = get_setting('upi_id')
                 price = get_setting(f'price_{plan_type}')
-                qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa={upi}%26am={price}%26cu=INR"
                 
-                pay_caption = f"💳 **Payment Details**\n\n**Plan:** {plan_type.upper()}\n**Amount:** ₹{price}\n\n⚠️ **PAY ONLY ON THIS QR**"
-                requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
-                requests.post(URL + 'sendPhoto', json={'chat_id': chat_id, 'photo': qr_url, 'caption': pay_caption, 'parse_mode': 'Markdown', 'reply_markup': {"inline_keyboard": [[{"text": "PAID ✅", "callback_data": "payment_paid"}, {"text": "CANCEL ❌", "callback_data": "back_to_menu"}]]}})
+                pay_caption = f"💳 **Payment Details**\n\n**Plan:** {plan_type.upper()}\n**Amount:** ₹{price}\n**UPI ID:** `{upi}`\n\n⚠️ *Kindly make the payment to the UPI ID above.*"
+                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': pay_caption, 'parse_mode': 'Markdown', 'reply_markup': {"inline_keyboard": [[{"text": "PAID ✅", "callback_data": "payment_paid"}, {"text": "CANCEL ❌", "callback_data": "back_to_menu"}]]}})
             elif data == "back_to_menu":
-                requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
-                requests.post(URL + 'sendPhoto', json={'chat_id': chat_id, 'photo': START_IMAGE_URL, 'caption': "✨ *KUNWAR DMS INCREASER* ✨", 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
+                welcome = "✨ *KUNWAR DMS INCREASER* ✨\n\nChoose an option below."
+                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': welcome, 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
     except Exception as e:
-        pass
+        print(f"Error handling update: {e}")
 
 def run_bot_loop():
-    # Purane stuck webhooks ko clear karne ke liye
     requests.get(URL + 'deleteWebhook')
     offset = 0
     while True:
@@ -119,8 +114,8 @@ def run_bot_loop():
                 for update in r["result"]:
                     offset = update["update_id"] + 1
                     process_update(update)
-        except:
-            pass
+        except Exception as e:
+            print(f"Loop error: {e}")
         time.sleep(1)
 
 if __name__ == '__main__':
