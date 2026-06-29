@@ -10,14 +10,14 @@ from telethon import TelegramClient
 from telethon.sessions import StringSession
 from telethon.tl.functions.messages import GetChatInviteImportersRequest
 
-# 1. Loop conflict aur double message completely khatam karne ke liye strict applied
+# 1. Async loop conflict aur background crashes block karne ke liye
 nest_asyncio.apply()
 
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar DMS Zerox Engine Live!", 200
+    return "Zerox DMS Engine Live!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAHiYZBwHZVp9puWKyiB3cd_jltw_3Ll_uY'
@@ -26,9 +26,13 @@ ADMIN_ID = 6752542323
 
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
+DATA_FILE = 'bot_database.json'
 # ===================================================
 
-DATA_FILE = 'bot_database.json'
+# State control variables (Double message strictly block karne ke liye)
+user_states = {}
+active_clients = {}
+processed_updates = set()
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -81,19 +85,17 @@ def get_premium_menu():
         [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
     ]}
 
-user_states = {}
-active_clients = {}
-payment_tracking = {}
-
 def send_tg_msg(chat_id, text, reply_markup=None):
     payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
     if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
     try: return requests.post(URL + 'sendMessage', json=payload).json()
     except: return {}
 
-# 2. Raw standard task generator—jo dynamic event loop conflict nahi hone deta
-def run_isolated_engine(coro):
-    asyncio.create_task(coro)
+def edit_tg_msg(chat_id, message_id, text, reply_markup=None):
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'text': text, 'parse_mode': 'Markdown'}
+    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
+    try: requests.post(URL + 'editMessageText', json=payload)
+    except: pass
 
 async def init_telethon_login(chat_id, phone):
     loop = asyncio.get_event_loop()
@@ -136,9 +138,9 @@ async def scrape_and_dm_join_requests(chat_id, channel_link, message_text):
         send_tg_msg(chat_id, "❌ No active session found! Click 'Add Account' first.")
         return
     send_tg_msg(chat_id, "⏳ Fetching pending join requests from channel/group...")
-    s_info = user_sessions[0]
     
     loop = asyncio.get_event_loop()
+    s_info = user_sessions[0]
     client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
     await client.connect()
     targets = []
@@ -152,11 +154,12 @@ async def scrape_and_dm_join_requests(chat_id, channel_link, message_text):
         await client.disconnect()
         return
     await client.disconnect()
+    
     if not targets:
         send_tg_msg(chat_id, "ℹ️ No pending requests found.")
         return
+        
     send_tg_msg(chat_id, f"🎯 Found {len(targets)} requests! Starting Campaign...")
-    
     idx = 0
     for target in targets:
         curr_session = user_sessions[idx % len(user_sessions)]
@@ -173,7 +176,7 @@ async def scrape_and_dm_join_requests(chat_id, channel_link, message_text):
         idx += 1
         await asyncio.sleep(2)
     save_data(db)
-    send_tg_msg(chat_id, "✅ **Mass DM for Join Requests Completed!**")
+    send_tg_msg(chat_id, "✅ **Mass DM for Join Requests Completed!**", get_main_menu(chat_id))
 
 async def start_mass_dm_task(chat_id, usernames, message_text):
     db = load_data()
@@ -197,15 +200,23 @@ async def start_mass_dm_task(chat_id, usernames, message_text):
         idx += 1
         await asyncio.sleep(2)
     save_data(db)
-    send_tg_msg(chat_id, "✅ **Campaign Completed Successfully!**")
+    send_tg_msg(chat_id, "✅ **Campaign Completed Successfully!**", get_main_menu(chat_id))
 
 def process_update(update):
     try:
+        # 2. STRICT DOUBLE MESSAGE FIX: Update ID tracking mechanism
+        update_id = update.get("update_id")
+        if update_id in processed_updates:
+            return
+        processed_updates.add(update_id)
+        if len(processed_updates) > 1000:
+            processed_updates.pop() # Buffer overflow protection
+
         if "message" in update:
             msg = update["message"]
             chat_id = msg["chat"]["id"]
             if "text" in msg:
-                text = msg["text"]
+                text = msg["text"].strip()
                 if text == "/start":
                     user_states.pop(chat_id, None)
                     send_tg_msg(chat_id, "✨ **KUNWAR DMS ULTIMATE BOT** ✨\n\nWelcome to elite automation control panel.", get_main_menu(chat_id))
@@ -223,10 +234,10 @@ def process_update(update):
                 if chat_id in user_states:
                     state = user_states[chat_id]
                     if state == 'expecting_phone':
-                        run_isolated_engine(init_telethon_login(chat_id, text.strip()))
+                        asyncio.create_task(init_telethon_login(chat_id, text))
                         return
                     elif state == 'expecting_otp':
-                        run_isolated_engine(verify_telethon_otp(chat_id, text.strip()))
+                        asyncio.create_task(verify_telethon_otp(chat_id, text))
                         return
                     elif state == 'expecting_msg_text':
                         db = load_data()
@@ -239,21 +250,20 @@ def process_update(update):
                         db = load_data()
                         campaign_msg = db["messages"].get(str(chat_id), "")
                         user_states.pop(chat_id, None)
-                        run_isolated_engine(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
+                        asyncio.create_task(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
                         return
                     elif state == 'expecting_channel_link':
                         db = load_data()
                         campaign_msg = db["messages"].get(str(chat_id), "")
                         user_states.pop(chat_id, None)
-                        run_isolated_engine(scrape_and_dm_join_requests(chat_id, text.strip(), campaign_msg))
+                        asyncio.create_task(scrape_and_dm_join_requests(chat_id, text, campaign_msg))
                         return
             
             if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
                 photo_id = msg["photo"][-1]["file_id"]
-                p_data = payment_tracking.get(chat_id, {})
                 user_states.pop(chat_id, None)
                 send_tg_msg(chat_id, "✅ Your details successful verified wait for admin approval")
-                admin_msg = f"🔔 **NEW REQUEST**\nID: `{chat_id}`\nUTR: `{p_data.get('utr','')}`\n\n`/approve {chat_id} 30`"
+                admin_msg = f"🔔 **NEW REQUEST**\nID: `{chat_id}`\n\n`/approve {chat_id} 30`"
                 requests.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_id, 'caption': admin_msg})
                 return
 
@@ -277,9 +287,9 @@ def process_update(update):
                 count = len(db["sessions"].get(str(chat_id), []))
                 send_tg_msg(chat_id, f"👤 Status: {status}\nLinked Accounts: {count}")
             elif data == "premium_plans":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "👑 **VIP Premium Plans**", 'reply_markup': get_premium_menu()})
+                edit_tg_msg(chat_id, msg_id, "👑 **VIP Premium Plans**", get_premium_menu())
             elif data == "pay_vip":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': f"💳 UPI ID: `{db['upi']}`\n\nSend payment and type your UTR number below."})
+                edit_tg_msg(chat_id, msg_id, f"💳 UPI ID: `{db['upi']}`\n\nSend payment and send screenshot below.")
                 user_states[chat_id] = 'expecting_screenshot'
             elif data == "add_session":
                 if not check_premium(chat_id):
@@ -294,7 +304,7 @@ def process_update(update):
                 if str(chat_id) not in db["messages"]:
                     send_tg_msg(chat_id, "⚠️ Please 'Set Message' first.")
                     return
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "🎯 **Select Target Type:**", 'reply_markup': get_target_selection_menu()})
+                edit_tg_msg(chat_id, msg_id, "🎯 **Select Target Type:**", get_target_selection_menu())
             elif data == "target_by_list":
                 user_states[chat_id] = 'expecting_targets'
                 send_tg_msg(chat_id, "📝 Send username list (one username per line):")
@@ -309,10 +319,9 @@ def process_update(update):
                 else:
                     send_tg_msg(chat_id, "❌ No active sessions found.")
             elif data == "back_to_menu":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "✨ *MAIN PANEL* ✨", 'reply_markup': get_main_menu(chat_id)})
+                edit_tg_msg(chat_id, msg_id, "✨ *MAIN PANEL* ✨", get_main_menu(chat_id))
     except: pass
 
-# 3. Webhook handling ko bypass karke continuous async long-polling logic
 async def run_bot_loop():
     requests.get(URL + 'deleteWebhook')
     offset = 0
@@ -330,10 +339,7 @@ def start_flask():
     app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
 
 if __name__ == '__main__':
-    # Flask ko separate context container thread me bind kiya
     Thread(target=start_flask, daemon=True).start()
-    
-    # Core loop activation
-    print("🤖 Zerox Engine Control Online...")
+    print("🤖 Zerox DMS System Loaded Perfectly...")
     loop = asyncio.get_event_loop()
     loop.run_until_complete(run_bot_loop())
