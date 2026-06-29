@@ -13,7 +13,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar DMS Thread Safe Engine Live!", 200
+    return "Kunwar DMS Multi-Thread Safe Engine Live!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAHB5P1EPHhByrqay9u7hAuWIFt-4jWEIKc'
@@ -83,21 +83,14 @@ def send_tg_msg(chat_id, text, reply_markup=None):
     if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
     return requests.post(URL + 'sendMessage', json=payload).json()
 
-# BULLETPROOF BACKGROUND COROUTINE EXECUTOR
-def force_run_async(coro):
+# CRITICAL FIX: PURE ISOLATED RUNTIME WORKER FOR TELETHON
+def run_telethon_isolated(coro):
     def worker():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(coro)
-        finally:
-            loop.close()
+        asyncio.run(coro)
     Thread(target=worker).start()
 
 async def init_telethon_login(chat_id, phone):
-    # Setting an isolated event loop inside the async execution block explicitly
-    loop = asyncio.get_event_loop()
-    client = TelegramClient(StringSession(), API_ID, API_HASH, loop=loop)
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
     await client.connect()
     try:
         send_code = await client.send_code_request(phone)
@@ -162,8 +155,7 @@ async def start_mass_dm_task(chat_id, usernames, message_text):
     for target in usernames:
         if not target.strip(): continue
         s_info = user_sessions[idx % len(user_sessions)]
-        loop = asyncio.get_event_loop()
-        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
+        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH)
         await client.connect()
         try:
             await client.send_message(target.strip(), message_text)
@@ -192,36 +184,24 @@ def process_update(update):
                     return
 
                 if text == "/admin" and int(chat_id) == int(ADMIN_ID):
-                    send_tg_msg(chat_id, "⚙️ *Admin Control Command Panel*\n\n`/approve USER_ID DAYS`\n`/setupupi NEW_UPI`")
+                    send_tg_msg(chat_id, "⚙️ *Admin Control Panel*\n\n`/approve USER_ID DAYS`")
                     return
                 elif text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
                     parts = text.split(" ")
                     make_premium(int(parts[1]), int(parts[2]))
                     send_tg_msg(ADMIN_ID, f"✅ Approved `{parts[1]}`")
-                    send_tg_msg(int(parts[1]), f"🎉 **Premium Subscription Activated!** Admin has approved your account.")
-                    return
-                elif text.startswith("/setupupi ") and int(chat_id) == int(ADMIN_ID):
-                    db = load_data()
-                    db["upi"] = text.split(" ", 1)[1].strip()
-                    save_data(db)
-                    send_tg_msg(chat_id, f"✅ Global UPI updated to: `{db['upi']}`")
                     return
 
                 if chat_id in user_states:
                     state = user_states[chat_id]
                     if state == 'expecting_phone':
-                        force_run_async(init_telethon_login(chat_id, text.strip()))
+                        run_telethon_isolated(init_telethon_login(chat_id, text.strip()))
                         return
                     elif state == 'expecting_otp':
-                        force_run_async(verify_telethon_otp(chat_id, text.strip()))
+                        run_telethon_isolated(verify_telethon_otp(chat_id, text.strip()))
                         return
                     elif state == 'expecting_2fa':
-                        force_run_async(verify_telethon_2fa(chat_id, text.strip()))
-                        return
-                    elif state == 'expecting_utr':
-                        payment_tracking[chat_id]['utr'] = text.strip()
-                        user_states[chat_id] = 'expecting_screenshot'
-                        send_tg_msg(chat_id, "⏳ **UTR Saved!** Now please upload the **Payment Screenshot**:")
+                        run_telethon_isolated(verify_telethon_2fa(chat_id, text.strip()))
                         return
                     elif state == 'expecting_msg_text':
                         db = load_data()
@@ -230,32 +210,12 @@ def process_update(update):
                         user_states.pop(chat_id, None)
                         send_tg_msg(chat_id, "✅ **Message Saved Successfully!**", get_main_menu(chat_id))
                         return
-                    elif state == 'expecting_redeem':
-                        db = load_data()
-                        if text.strip() in db["redeem_codes"]:
-                            days = db["redeem_codes"][text.strip()]
-                            make_premium(chat_id, days)
-                            user_states.pop(chat_id, None)
-                            send_tg_msg(chat_id, f"🎉 **Code Redeemed!** Activated {days} days premium.", get_main_menu(chat_id))
-                        else:
-                            send_tg_msg(chat_id, "❌ Invalid Redeem Code!")
-                        return
                     elif state == 'expecting_targets':
                         db = load_data()
                         campaign_msg = db["messages"].get(str(chat_id), "")
                         user_states.pop(chat_id, None)
-                        force_run_async(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
+                        run_telethon_isolated(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
                         return
-
-            if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
-                photo_id = msg["photo"][-1]["file_id"]
-                p_data = payment_tracking.get(chat_id, {})
-                user_states.pop(chat_id, None)
-                send_tg_msg(chat_id, "✅ Your details successful verified wait for admin approval")
-                
-                admin_msg = f"🔔 **NEW REQUEST**\nID: `{chat_id}`\nPlan: {p_data.get('plan','')}\nUTR: `{p_data.get('utr','')}`\n\n`/approve {chat_id} 30`"
-                requests.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_id, 'caption': admin_msg})
-                return
 
         elif "callback_query" in update:
             cq = update["callback_query"]
@@ -264,31 +224,18 @@ def process_update(update):
             data = cq["data"]
             db = load_data()
 
-            if data == "premium_plans":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "👑 **VIP Premium Plans**", 'reply_markup': get_premium_menu()})
-            elif data.startswith("pay_"):
-                plan = data.split("_")[1]
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': f"💳 UPI: `{db['upi']}`\nClick PAID after done.", 'reply_markup': {"inline_keyboard": [[{"text": "PAID ✅", "callback_data": f"confirm_paid_{plan}"}]]}})
-            elif data.startswith("confirm_paid_"):
-                payment_tracking[chat_id] = {'plan': data.split("_")[2]}
-                user_states[chat_id] = 'expecting_utr'
-                requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
-                send_tg_msg(chat_id, "✍️ Enter 12-digit UTR Number:")
-            elif data == "set_msg":
+            if data == "set_msg":
                 user_states[chat_id] = 'expecting_msg_text'
                 send_tg_msg(chat_id, "📝 Send your message text for campaign:")
             elif data == "preview_msg":
                 msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
                 send_tg_msg(chat_id, f"📋 **Your Current Campaign Message:**\n\n{msg_text}")
             elif data == "my_stats":
-                send_tg_msg(chat_id, f"📊 **Your Campaign Stats:**\nTotal Sent: {db['stats']['sent']}\nTotal Failed: {db['stats']['failed']}\nSpeed: Dynamic 1.5 msg/s")
+                send_tg_msg(chat_id, f"📊 **Your Campaign Stats:**\nTotal Sent: {db['stats']['sent']}\nTotal Failed: {db['stats']['failed']}")
             elif data == "my_account":
                 status = "👑 VIP Premium Active" if check_premium(chat_id) else "❌ Free Tier (Limited)"
                 accounts_count = len(db["sessions"].get(str(chat_id), []))
                 send_tg_msg(chat_id, f"👤 **Account Info:**\nStatus: {status}\nLinked Accounts: {accounts_count}")
-            elif data == "redeem_code":
-                user_states[chat_id] = 'expecting_redeem'
-                send_tg_msg(chat_id, "🎁 Send your VIP promo code:")
             elif data == "add_session":
                 if not check_premium(chat_id):
                     send_tg_msg(chat_id, "❌ **Access Denied!** Buy Premium subscription first.")
@@ -311,7 +258,7 @@ def process_update(update):
                     send_tg_msg(chat_id, "🗑️ All active sessions cleared successfully!")
                 else:
                     send_tg_msg(chat_id, "❌ No active sessions found.")
-            elif data == "back_to_menu" or data == "how_use" or data == "support" or data == "refer_earn":
+            elif data == "back_to_menu":
                 requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
                 send_tg_msg(chat_id, "✨ *MAIN PANEL* ✨", get_main_menu(chat_id))
     except: pass
