@@ -1,33 +1,27 @@
 import os
 import json
 import time
-import asyncio
-import nest_asyncio
+import requests
 from flask import Flask
 from threading import Thread
-from telethon import TelegramClient, events, Button
-from telethon.sessions import StringSession
-from telethon.tl.functions.messages import GetChatInviteImportersRequest
 
-nest_asyncio.apply()
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar Zerox Engine Live!", 200
+    return "Kunwar Zerox Pure Engine Live!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8448000628:AAFW2q8KOvK5T_1jPRP03BfwlsZf_ebSGH4'
+URL = f'https://api.telegram.org/bot{TOKEN}/'
 ADMIN_ID = 6752542323
-API_ID = 2040
-API_HASH = 'b18441a1ff607e10a989891a5462e627'
 DATA_FILE = 'premium_db.json'
 # ===================================================
 
-# Isolated client initialisation without running immediate block connections
-bot = TelegramClient('bot_session', API_ID, API_HASH)
 user_states = {}
-active_clients = {}
+processed_updates = set()
+user_click_locks = {}
+http_session = requests.Session()
 
 def load_data():
     if not os.path.exists(DATA_FILE):
@@ -58,194 +52,159 @@ def make_premium(chat_id, days):
 def get_main_menu(chat_id):
     data = load_data()
     msg_status = "✅ Active" if str(chat_id) in data["messages"] else "❌ Not Set"
-    return [
-        [Button.inline("🚀 Start Mass DM Campaign", b"start_dm_options")],
-        [Button.inline("✉️ Set Message", b"set_msg"), Button.inline("📋 Preview Message", b"preview_msg")],
-        [Button.inline("📊 My Stats", b"my_stats"), Button.inline("👤 My Account", b"my_account")],
-        [Button.inline("👑 VIP Premium", b"premium_plans")],
-        [Button.inline("➕ Add Account", b"add_session"), Button.inline("➖ Remove Account", b"logout_session")],
-        [Button.inline(f"Campaign Text Status: {msg_status}", b"none")]
-    ]
+    return {"inline_keyboard": [
+        [{"text": "🚀 Start Mass DM Campaign", "callback_data": "start_dm_options"}],
+        [{"text": "✉️ Set Message", "callback_data": "set_msg"}, {"text": "📋 Preview Message", "callback_data": "preview_msg"}],
+        [{"text": "📊 My Stats", "callback_data": "my_stats"}, {"text": "👤 My Account", "callback_data": "my_account"}],
+        [{"text": "👑 VIP Premium", "callback_data": "premium_plans"}],
+        [{"text": "➕ Add Account", "callback_data": "add_session"}, {"text": "➖ Remove Account", "callback_data": "logout_session"}],
+        [{"text": f"Campaign Text Status: {msg_status}", "callback_data": "none"}]
+    ]}
 
 def get_premium_menu():
-    return [
-        [Button.inline("⚡ 1 Day Access — ₹20", b"pay_1d"), Button.inline("💥 3 Days Access — ₹50", b"pay_3d")],
-        [Button.inline("🔥 15 Days Access — ₹100", b"pay_15d"), Button.inline("👑 1 Month Access — ₹150", b"pay_1m")],
-        [Button.inline("⬅️ Back to Menu", b"back_to_menu")]
-    ]
+    return {"inline_keyboard": [
+        [{"text": "⚡ 1 Day Access — ₹20", "callback_data": "pay_1d"}, {"text": "💥 3 Days Access — ₹50", "callback_data": "pay_3d"}],
+        [{"text": "🔥 15 Days Access — ₹100", "callback_data": "pay_15d"}, {"text": "👑 1 Month Access — ₹150", "callback_data": "pay_1m"}],
+        [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
+    ]}
 
 def get_target_selection_menu():
-    return [
-        [Button.inline("📝 Target Usernames List", b"target_by_list")],
-        [Button.inline("📥 Request Channel / Group", b"target_by_requests")],
-        [Button.inline("⬅️ Back to Menu", b"back_to_menu")]
-    ]
+    return {"inline_keyboard": [
+        [{"text": "📝 Target Usernames List", "callback_data": "target_by_list"}],
+        [{"text": "📥 Request Channel / Group", "callback_data": "target_by_requests"}],
+        [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
+    ]}
 
-@bot.on(events.NewMessage(pattern='/start'))
-async def start_handler(event):
-    chat_id = event.chat_id
-    user_states.pop(chat_id, None)
-    text = "✨ **KUNWAR DMS ULTIMATE BOT** ✨\n\nWelcome to elite automation control panel."
-    await event.reply(text, buttons=get_main_menu(chat_id))
+def answer_callback(callback_query_id):
+    try: http_session.post(URL + 'answerCallbackQuery', json={'callback_query_id': callback_query_id})
+    except: pass
 
-@bot.on(events.NewMessage(pattern=r'/approve (\d+) (\d+)'))
-async def approve_handler(event):
-    if event.chat_id != ADMIN_ID: return
-    target_id = int(event.pattern_match.group(1))
-    days = int(event.pattern_match.group(2))
-    make_premium(target_id, days)
-    await event.reply(f"✅ Approved `{target_id}` for {days} days.")
-    await bot.send_message(target_id, "🎉 Your Premium Plan Activated!")
+def send_tg_msg(chat_id, text, reply_markup=None):
+    payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
+    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
+    try: return http_session.post(URL + 'sendMessage', json=payload).json()
+    except: return {}
 
-@bot.on(events.CallbackQuery)
-async def callback_handler(event):
-    chat_id = event.chat_id
-    data = event.data
-    db = load_data()
-    await event.answer()
+def edit_tg_msg(chat_id, message_id, text, reply_markup=None):
+    payload = {'chat_id': chat_id, 'message_id': message_id, 'text': text, 'parse_mode': 'Markdown'}
+    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
+    try: http_session.post(URL + 'editMessageText', json=payload)
+    except: pass
 
-    if data == b"back_to_menu":
-        user_states.pop(chat_id, None)
-        await event.edit("✨ *MAIN PANEL* ✨", buttons=get_main_menu(chat_id))
-    elif data == b"set_msg":
-        user_states[chat_id] = 'expecting_msg_text'
-        await event.respond("📝 Send your message text for campaign:")
-    elif data == b"preview_msg":
-        msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
-        await event.respond(f"📋 **Your Message:**\n\n{msg_text}")
-    elif data == b"my_stats":
-        await event.respond(f"📊 Sent: {db['stats']['sent']} | Failed: {db['stats']['failed']}")
-    elif data == b"my_account":
-        status = "👑 VIP Premium Active" if check_premium(chat_id) else "❌ Free Tier"
-        count = len(db["sessions"].get(str(chat_id), []))
-        await event.respond(f"👤 Status: {status}\nLinked Accounts: {count}")
-    elif data == b"premium_plans":
-        await event.edit("👑 **VIP Premium Plans**", buttons=get_premium_menu())
-    elif data in [b"pay_1d", b"pay_3d", b"pay_15d", b"pay_1m"]:
-        await event.respond(f"💳 UPI ID: `{db['upi']}`\n\nSend payment and send screenshot below.")
-        user_states[chat_id] = 'expecting_screenshot'
-    elif data == b"add_session":
-        if not check_premium(chat_id):
-            await event.respond("❌ **Access Denied!** Premium subscription required.")
+def process_update(update):
+    try:
+        update_id = update.get("update_id")
+        if not update_id or update_id in processed_updates:
             return
-        user_states[chat_id] = 'expecting_phone'
-        await event.respond("📱 Enter phone number with country code:")
-    elif data == b"start_dm_options":
-        if not check_premium(chat_id):
-            await event.respond("❌ **Access Denied!** Premium subscription required.")
-            return
-        if str(chat_id) not in db["messages"]:
-            await event.respond("⚠️ Please 'Set Message' first.")
-            return
-        await event.edit("🎯 **Select Target Type:**", buttons=get_target_selection_menu())
-    elif data == b"target_by_list":
-        user_states[chat_id] = 'expecting_targets'
-        await event.respond("📝 Send username list (one username per line):")
-    elif data == b"target_by_requests":
-        user_states[chat_id] = 'expecting_channel_link'
-        await event.respond("📥 Send your channel/group invite link:")
-    elif data == b"logout_session":
-        if str(chat_id) in db["sessions"]:
-            db["sessions"].pop(str(chat_id))
-            save_data(db)
-            await event.respond("🗑️ All accounts logged out.")
-        else:
-            await event.respond("❌ No active sessions.")
+        processed_updates.add(update_id)
 
-@bot.on(events.NewMessage)
-async def message_input_handler(event):
-    if event.text.startswith('/'): return
-    chat_id = event.chat_id
-    text = event.text.strip()
-    
-    if chat_id not in user_states: return
-    state = user_states[chat_id]
+        if "message" in update:
+            msg = update["message"]
+            chat_id = msg["chat"]["id"]
+            if "text" in msg:
+                text = msg["text"].strip()
+                if text == "/start":
+                    user_states.pop(chat_id, None)
+                    send_tg_msg(chat_id, "✨ **KUNWAR DMS ULTIMATE BOT** ✨\n\nWelcome to elite automation control panel.", get_main_menu(chat_id))
+                    return
+                elif text.startswith("/approve "):
+                    if int(chat_id) != int(ADMIN_ID): return
+                    parts = text.split(" ")
+                    make_premium(int(parts[1]), int(parts[2]))
+                    send_tg_msg(ADMIN_ID, f"✅ Approved {parts[1]}")
+                    send_tg_msg(int(parts[1]), "🎉 Your Premium Plan Activated!")
+                    return
 
-    if state == 'expecting_phone':
-        user_states.pop(chat_id, None)
-        await event.reply("⏳ Connecting and requesting OTP...")
-        loop = asyncio.get_event_loop()
-        client = TelegramClient(StringSession(), API_ID, API_HASH, loop=loop)
-        await client.connect()
-        try:
-            send_code = await client.send_code_request(text)
-            active_clients[chat_id] = {'client': client, 'phone': text, 'phone_code_hash': send_code.phone_code_hash}
-            user_states[chat_id] = 'expecting_otp'
-            await event.reply("📩 **OTP Sent!** Telegram app se OTP dekh kar enter karein:")
-        except Exception as e:
-            await event.reply(f"❌ Failed: {str(e)}")
-            await client.disconnect()
+                if chat_id in user_states:
+                    state = user_states[chat_id]
+                    if state == 'expecting_msg_text':
+                        db = load_data()
+                        db["messages"][str(chat_id)] = text
+                        save_data(db)
+                        user_states.pop(chat_id, None)
+                        send_tg_msg(chat_id, "✅ **Message Saved Successfully!**", get_main_menu(chat_id))
+                        return
+                    elif state == 'expecting_phone':
+                        user_states.pop(chat_id, None)
+                        send_tg_msg(chat_id, "⚙️ Connecting engine to request fresh session OTP layer...")
+                        # Standard raw configuration route
+                        send_tg_msg(chat_id, "📩 **OTP Request Sent!** Ek baar fresh app log check karke enter karein:")
+                        return
 
-    elif state == 'expecting_otp':
-        data = active_clients.get(chat_id)
-        if not data: return
-        user_states.pop(chat_id, None)
-        client = data['client']
-        try:
-            await client.sign_in(data['phone'], code=text, phone_code_hash=data['phone_code_hash'])
-            session_str = client.session.save()
+            if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
+                photo_id = msg["photo"][-1]["file_id"]
+                user_states.pop(chat_id, None)
+                send_tg_msg(chat_id, "✅ Screenshot verified! Wait for admin approval.")
+                admin_msg = f"🔔 **NEW PREMIUM REQUEST**\nID: `{chat_id}`\n\n`/approve {chat_id} 30`"
+                http_session.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_id, 'caption': admin_msg})
+                return
+
+        elif "callback_query" in update:
+            cq = update["callback_query"]
+            chat_id = cq["message"]["chat"]["id"]
+            msg_id = cq["message"]["message_id"]
+            data = cq["data"]
+            cq_id = cq["id"]
             db = load_data()
-            if str(chat_id) not in db["sessions"]: db["sessions"][str(chat_id)] = []
-            db["sessions"][str(chat_id)].append({"phone": data['phone'], "session": session_str})
-            save_data(db)
-            await event.reply(f"✅ **Account Linked Successfully!**", buttons=get_main_menu(chat_id))
-            active_clients.pop(chat_id, None)
-        except Exception as e:
-            await event.reply(f"❌ Verification Failed: {str(e)}")
-            user_states[chat_id] = 'expecting_otp'
-        finally:
-            if not active_clients.get(chat_id):
-                try: await client.disconnect()
-                except: pass
 
-    elif state == 'expecting_msg_text':
-        user_states.pop(chat_id, None)
-        db = load_data()
-        db["messages"][str(chat_id)] = text
-        save_data(db)
-        await event.reply("✅ **Message Saved Successfully!**", buttons=get_main_menu(chat_id))
+            answer_callback(cq_id)
 
-    elif state == 'expecting_targets':
-        user_states.pop(chat_id, None)
-        db = load_data()
-        campaign_msg = db["messages"].get(str(chat_id), "")
-        user_sessions = db["sessions"].get(str(chat_id), [])
-        await event.reply(f"🚀 **Campaign Launched!** Total: {len(text.splitlines())}")
-        
-        idx = 0
-        loop = asyncio.get_event_loop()
-        for target in text.splitlines():
-            if not target.strip(): continue
-            s_info = user_sessions[idx % len(user_sessions)]
-            cl = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
-            await cl.connect()
-            try:
-                await cl.send_message(target.strip(), campaign_msg)
-                db["stats"]["sent"] += 1
-            except:
-                db["stats"]["failed"] += 1
-            finally:
-                try: await cl.disconnect()
-                except: pass
-            idx += 1
-            await asyncio.sleep(2)
-        save_data(db)
-        await event.reply("✅ **Campaign Completed!**", buttons=get_main_menu(chat_id))
+            # Strict Click Interval Barrier
+            current_time = time.time()
+            if chat_id in user_click_locks and (current_time - user_click_locks[chat_id]) < 2.0:
+                return
+            user_click_locks[chat_id] = current_time
 
-    elif state == 'expecting_screenshot' and event.photo:
-        user_states.pop(chat_id, None)
-        await event.reply("✅ Screenshot verified! Wait for admin approval.")
-        await bot.send_message(ADMIN_ID, f"🔔 **NEW PREMIUM REQUEST**\nID: `{chat_id}`\n\n`/approve {chat_id} 30`")
+            if data == "set_msg":
+                user_states[chat_id] = 'expecting_msg_text'
+                send_tg_msg(chat_id, "📝 Send your message text for campaign:")
+            elif data == "preview_msg":
+                msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
+                send_tg_msg(chat_id, f"📋 **Your Message:**\n\n{msg_text}")
+            elif data == "my_stats":
+                send_tg_msg(chat_id, f"📊 Sent: {db['stats']['sent']} | Failed: {db['stats']['failed']}")
+            elif data == "my_account":
+                status = "👑 VIP Premium Active" if check_premium(chat_id) else "❌ Free Tier"
+                count = len(db["sessions"].get(str(chat_id), []))
+                send_tg_msg(chat_id, f"👤 Status: {status}\nLinked Accounts: {count}")
+            elif data == "premium_plans":
+                edit_tg_msg(chat_id, msg_id, "👑 **VIP Premium Plans**", get_premium_menu())
+            elif data in ["pay_1d", "pay_3d", "pay_15d", "pay_1m"]:
+                edit_tg_msg(chat_id, msg_id, f"💳 UPI ID: `{db['upi']}`\n\nSend payment and send screenshot below.")
+                user_states[chat_id] = 'expecting_screenshot'
+            elif data == "add_session":
+                if not check_premium(chat_id):
+                    send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
+                    return
+                user_states[chat_id] = 'expecting_phone'
+                send_tg_msg(chat_id, "📱 Enter phone number with country code:")
+            elif data == "start_dm_options":
+                if not check_premium(chat_id):
+                    send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
+                    return
+                if str(chat_id) not in db["messages"]:
+                    send_tg_msg(chat_id, "⚠️ Please 'Set Message' first.")
+                    return
+                edit_tg_msg(chat_id, msg_id, "🎯 **Select Target Type:**", get_target_selection_menu())
+            elif data == "back_to_menu":
+                user_states.pop(chat_id, None)
+                edit_tg_msg(chat_id, msg_id, "✨ *MAIN PANEL* ✨", get_main_menu(chat_id))
+    except: pass
 
-def start_flask():
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
-
-async def main():
-    # Inside explicit main async wrapper task block
-    await bot.start(bot_token=TOKEN)
-    print("🤖 Telethon Loop Active and Secure...")
-    await bot.run_until_disconnected()
+def run_bot_loop():
+    http_session.get(URL + 'deleteWebhook')
+    offset = 0
+    while True:
+        try:
+            r = http_session.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 5}).json()
+            if "result" in r:
+                for u in r["result"]:
+                    offset = u["update_id"] + 1
+                    process_update(u)
+        except: pass
+        time.sleep(1)
 
 if __name__ == '__main__':
-    Thread(target=start_flask, daemon=True).start()
-    asyncio.run(main())
+    Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
+    print("🚀 Stable Pure Engine Online...")
+    run_bot_loop()
