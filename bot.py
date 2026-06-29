@@ -16,7 +16,7 @@ def home():
     return "Kunwar DMS Zerox Engine Live!", 200
 
 # ================== CONFIGURATION ==================
-TOKEN = '8644302388:AAHB5P1EPHhByrqay9u7hAuWIFt-4jWEIKc'
+TOKEN = '8644302388:AAHiYZBwHZVp9puWKyiB3cd_jltw_3Ll_uY'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
 ADMIN_ID = 6752542323
 
@@ -52,7 +52,6 @@ def make_premium(chat_id, days):
     data["premium"][str(chat_id)] = expiry
     save_data(data)
 
-# EXACT ZEROX PATTERN KEYBOARD
 def get_main_menu(chat_id):
     data = load_data()
     msg_status = "✅ Active" if str(chat_id) in data["messages"] else "❌ Not Set"
@@ -204,121 +203,4 @@ def process_update(update):
                     user_states.pop(chat_id, None)
                     send_tg_msg(chat_id, "✨ **KUNWAR DMS ULTIMATE BOT** ✨\n\nWelcome to elite automation control panel.", get_main_menu(chat_id))
                     return
-                if text == "/admin" and int(chat_id) == int(ADMIN_ID):
-                    send_tg_msg(chat_id, "⚙️ Admin Option: `/approve USER_ID DAYS`")
-                    return
-                elif text.startswith("/approve ") and int(chat_id) == int(ADMIN_ID):
-                    parts = text.split(" ")
-                    make_premium(int(parts[1]), int(parts[2]))
-                    send_tg_msg(ADMIN_ID, f"✅ Approved `{parts[1]}`")
-                    send_tg_msg(int(parts[1]), "🎉 Your Premium Plan Activated!")
-                    return
-
-                if chat_id in user_states:
-                    state = user_states[chat_id]
-                    if state == 'expecting_phone':
-                        run_isolated_engine(init_telethon_login(chat_id, text.strip()))
-                        return
-                    elif state == 'expecting_otp':
-                        run_isolated_engine(verify_telethon_otp(chat_id, text.strip()))
-                        return
-                    elif state == 'expecting_msg_text':
-                        db = load_data()
-                        db["messages"][str(chat_id)] = text
-                        save_data(db)
-                        user_states.pop(chat_id, None)
-                        send_tg_msg(chat_id, "✅ **Message Saved Successfully!**", get_main_menu(chat_id))
-                        return
-                    elif state == 'expecting_targets':
-                        db = load_data()
-                        campaign_msg = db["messages"].get(str(chat_id), "")
-                        user_states.pop(chat_id, None)
-                        run_isolated_engine(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
-                        return
-                    elif state == 'expecting_channel_link':
-                        db = load_data()
-                        campaign_msg = db["messages"].get(str(chat_id), "")
-                        user_states.pop(chat_id, None)
-                        run_isolated_engine(scrape_and_dm_join_requests(chat_id, text.strip(), campaign_msg))
-                        return
-            
-            if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
-                photo_id = msg["photo"][-1]["file_id"]
-                p_data = payment_tracking.get(chat_id, {})
-                user_states.pop(chat_id, None)
-                send_tg_msg(chat_id, "✅ Your details successful verified wait for admin approval")
-                admin_msg = f"🔔 **NEW REQUEST**\nID: `{chat_id}`\nUTR: `{p_data.get('utr','')}`\n\n`/approve {chat_id} 30`"
-                requests.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_id, 'caption': admin_msg})
-                return
-
-        elif "callback_query" in update:
-            cq = update["callback_query"]
-            chat_id = cq["message"]["chat"]["id"]
-            msg_id = cq["message"]["message_id"]
-            data = cq["data"]
-            db = load_data()
-
-            if data == "set_msg":
-                user_states[chat_id] = 'expecting_msg_text'
-                send_tg_msg(chat_id, "📝 Send your message text for campaign:")
-            elif data == "preview_msg":
-                msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
-                send_tg_msg(chat_id, f"📋 **Your Message:**\n\n{msg_text}")
-            elif data == "my_stats":
-                send_tg_msg(chat_id, f"📊 Sent: {db['stats']['sent']} | Failed: {db['stats']['failed']}")
-            elif data == "my_account":
-                status = "👑 VIP Premium Active" if check_premium(chat_id) else "❌ Free Tier"
-                count = len(db["sessions"].get(str(chat_id), []))
-                send_tg_msg(chat_id, f"👤 Status: {status}\nLinked Accounts: {count}")
-            elif data == "premium_plans":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "👑 **VIP Premium Plans**", 'reply_markup': get_premium_menu()})
-            elif data == "pay_vip":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': f"💳 UPI ID: `{db['upi']}`\n\nSend payment and type your UTR number below."})
-                user_states[chat_id] = 'expecting_screenshot'
-            elif data == "add_session":
-                if not check_premium(chat_id):
-                    send_tg_msg(chat_id, "❌ **Access Denied!** Buy Premium subscription first.")
-                    return
-                user_states[chat_id] = 'expecting_phone'
-                send_tg_msg(chat_id, "📱 Enter phone number with country code:")
-            elif data == "start_dm_options":
-                if not check_premium(chat_id):
-                    send_tg_msg(chat_id, "❌ **Access Denied!** Buy Premium subscription first.")
-                    return
-                if str(chat_id) not in db["messages"]:
-                    send_tg_msg(chat_id, "⚠️ Please 'Set Message' first.")
-                    return
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "🎯 **Select Target Type:**", 'reply_markup': get_target_selection_menu()})
-            elif data == "target_by_list":
-                user_states[chat_id] = 'expecting_targets'
-                send_tg_msg(chat_id, "📝 Send username list (one username per line):")
-            elif data == "target_by_requests":
-                user_states[chat_id] = 'expecting_channel_link'
-                send_tg_msg(chat_id, "📥 Apne channel ka link ya username bhejein:")
-            elif data == "logout_session":
-                if str(chat_id) in db["sessions"]:
-                    db["sessions"].pop(str(chat_id))
-                    save_data(db)
-                    send_tg_msg(chat_id, "🗑️ All accounts logged out.")
-                else:
-                    send_tg_msg(chat_id, "❌ No active sessions found.")
-            elif data == "back_to_menu":
-                requests.post(URL + 'editMessageText', json={'chat_id': chat_id, 'message_id': msg_id, 'text': "✨ *MAIN PANEL* ✨", 'reply_markup': get_main_menu(chat_id)})
-    except: pass
-
-def run_bot_loop():
-    requests.get(URL + 'deleteWebhook')
-    offset = 0
-    while True:
-        try:
-            r = requests.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 5}).json()
-            if "result" in r:
-                for u in r["result"]:
-                    offset = u["update_id"] + 1
-                    process_update(u)
-        except: pass
-        time.sleep(1)
-
-if __name__ == '__main__':
-    Thread(target=run_bot_loop).start()
-    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
+                if text == "/admin" and int(chat_
