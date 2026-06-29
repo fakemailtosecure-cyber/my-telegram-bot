@@ -7,7 +7,6 @@ from flask import Flask
 from threading import Thread
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
-from telethon.errors import SessionPasswordNeeded, PhoneCodeInvalid, PhoneCodeExpired
 from telethon.tl.functions.messages import GetChatInviteImportersRequest
 
 nest_asyncio.apply()
@@ -67,7 +66,6 @@ def get_main_menu(chat_id):
         [Button.inline(f"Campaign Text Status: {msg_status}", b"none")]
     ]
 
-# 4 Buttons Plans Jaisa Aapne Bola: 1 Day, 3 Days, 15 Days, 1 Month
 def get_premium_menu():
     return [
         [Button.inline("⚡ 1 Day Access — ₹20", b"pay_1d"), Button.inline("💥 3 Days Access — ₹50", b"pay_3d")],
@@ -103,8 +101,6 @@ async def callback_handler(event):
     chat_id = event.chat_id
     data = event.data
     db = load_data()
-    
-    # Anti-Spam state clearance
     await event.answer()
 
     if data == b"back_to_menu":
@@ -165,7 +161,7 @@ async def message_input_handler(event):
     state = user_states[chat_id]
 
     if state == 'expecting_phone':
-        user_states.pop(chat_id, None) # State consumption lock
+        user_states.pop(chat_id, None)
         await event.reply("⏳ Connecting and requesting OTP...")
         loop = asyncio.get_event_loop()
         client = TelegramClient(StringSession(), API_ID, API_HASH, loop=loop)
@@ -195,7 +191,7 @@ async def message_input_handler(event):
             active_clients.pop(chat_id, None)
         except Exception as e:
             await event.reply(f"❌ Verification Failed: {str(e)}")
-            user_states[chat_id] = 'expecting_otp' # Retry block
+            user_states[chat_id] = 'expecting_otp'
         finally:
             if not active_clients.get(chat_id):
                 try: await client.disconnect()
@@ -245,5 +241,5 @@ def start_flask():
 
 if __name__ == '__main__':
     Thread(target=start_flask, daemon=True).start()
-    print("🤖 Telethon Engine Running Native...")
+    print("🤖 Telethon Native Engine Active...")
     bot.run_until_disconnected()
