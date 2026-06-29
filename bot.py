@@ -1,4 +1,3 @@
-import os
 import json
 import sqlite3
 import requests
@@ -22,8 +21,6 @@ def init_db():
         cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
     conn.commit()
     conn.close()
-
-init_db()
 
 def get_setting(key):
     conn = sqlite3.connect('bot_data.db')
@@ -99,15 +96,12 @@ def process_update(update):
                 requests.post(URL + 'deleteMessage', json={'chat_id': chat_id, 'message_id': msg_id})
                 requests.post(URL + 'sendPhoto', json={'chat_id': chat_id, 'photo': START_IMAGE_URL, 'caption': "✨ *KUNWAR DMS INCREASER* ✨", 'parse_mode': 'Markdown', 'reply_markup': get_main_menu()})
     except Exception as e:
-        print(f"Error: {e}")
+        pass
 
 if __name__ == '__main__':
-    # Webhook fasa hua clear karne ke liye force trigger
+    init_db()
     requests.get(URL + 'deleteWebhook')
-    print("Webhook cleared successfully.")
-    
     offset = 0
-    print("Standalone Bot Loop Started...")
     while True:
         try:
             r = requests.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 5}).json()
@@ -115,6 +109,6 @@ if __name__ == '__main__':
                 for update in r["result"]:
                     offset = update["update_id"] + 1
                     process_update(update)
-        except Exception as e:
-            print(f"Loop Error: {e}")
+        except:
+            pass
         time.sleep(1)
