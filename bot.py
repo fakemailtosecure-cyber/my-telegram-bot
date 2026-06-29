@@ -11,7 +11,8 @@ app = Flask('')
 def home(): return "Kunwar DMS Mega Bot is Alive!"
 
 def run_web_server():
-    port = int(os.environ.get("PORT", 8080))
+    # Render ke automatic port requirement (10000) ko fulfill karne ke liye fix
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
 
 # ================== CONFIGURATION ==================
@@ -19,8 +20,7 @@ TOKEN = '8644302388:AAHQ0PsApaZ6Fv11ezOS45uwAHduzERWBrw'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
 ADMIN_ID = 8644302388  
 
-# 🔗 [YAHAN APNE LOGO BANNER KA URL DALO]
-# Agar aapke paas direct link nahi hai, toh abhi is link ko chalne dein
+# 🔗 Aapka custom start banner image link
 START_IMAGE_URL = 'https://telegra.ph/file/0c968f94d3a82efda1608.jpg' 
 # ===================================================
 
@@ -125,10 +125,16 @@ def bot_polling():
                         # --- ADMIN CONTROLS ---
                         if text == "/admin" and chat_id == ADMIN_ID:
                             upi = get_setting('upi_id')
+                            p1d = get_setting('price_1d')
+                            p3d = get_setting('price_3d')
+                            p7d = get_setting('price_7d')
+                            p1m = get_setting('price_1m')
+                            ppm = get_setting('price_perm')
+                            
                             admin_text = (
                                 f"⚙️ *Admin Control Panel*\n\n"
                                 f"**Manual UPI:** `{upi}`\n\n"
-                                f"💡 *Prices Setup Commands:*\n"
+                                f"💰 **Prices Setup Commands:**\n"
                                 f"/setupupi [UPI_ID]\n"
                                 f"/setprice1d [Price] | /setprice3d [Price]\n"
                                 f"/setprice7d [Price] | /setprice1m [Price]\n"
@@ -152,13 +158,12 @@ def bot_polling():
                         # --- USER CONTROLS ---
                         if text == "/start":
                             welcome = "✨ *KUNWAR DMS INCREASER* ✨\n\n*Server Status:* Online 🟢\n*System:* Active\n*Security:* Enabled\n\nChoose an option below."
-                            # Direct Image mapping for start banner
                             send_photo(chat_id, START_IMAGE_URL, welcome, get_main_menu())
                             continue
                             
                         elif chat_id in user_steps:
                             if user_steps[chat_id] == 'expecting_phone':
-                                send_message(chat_id, "📩 Connecting... Requesting login code.")
+                                send_message(chat_id, "📩 Connecting... Requesting secure login code.")
                                 del user_steps[chat_id]
 
                     elif "callback_query" in update:
@@ -175,7 +180,7 @@ def bot_polling():
                             upi = get_setting('upi_id')
                             price = get_setting(f'price_{plan_type}')
                             
-                            # Real Dynamic QR API link mapping
+                            # Auto QR Code Generator API
                             qr_api_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=upi://pay?pa={upi}%26am={price}%26cu=INR"
                             
                             pay_caption = (
@@ -187,7 +192,6 @@ def bot_polling():
                                 f"• UTR ID\n"
                                 f"• PAYMENT SCREENSHOT"
                             )
-                            # Deleting template message and pushing official dynamic image
                             requests.post(URL + 'deleteMessage', data={'chat_id': chat_id, 'message_id': msg_id})
                             send_photo(chat_id, qr_api_url, pay_caption, get_payment_action_buttons())
                         elif data == "payment_paid":
@@ -205,5 +209,5 @@ def bot_polling():
 
 if __name__ == '__main__':
     Thread(target=run_web_server).start()
-    print("Kunwar Core Live with Graphics...")
+    print("Kunwar Master Core Live...")
     bot_polling()
