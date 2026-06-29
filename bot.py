@@ -13,12 +13,12 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Kunwar DMS Enterprise Engine Live!", 200
+    return "Kunwar DMS Thread Safe Engine Live!", 200
 
 # ================== CONFIGURATION ==================
 TOKEN = '8644302388:AAHB5P1EPHhByrqay9u7hAuWIFt-4jWEIKc'
 URL = f'https://api.telegram.org/bot{TOKEN}/'
-ADMIN_ID = 6752542323  # Thor Bhai Ki ID
+ADMIN_ID = 6752542323
 
 API_ID = 2040
 API_HASH = 'b18441a1ff607e10a989891a5462e627'
@@ -52,11 +52,9 @@ def make_premium(chat_id, days):
     data["premium"][str(chat_id)] = expiry
     save_data(data)
 
-# FULL PANEL KEYBOARD
 def get_main_menu(chat_id):
     data = load_data()
     msg_set = "✅ Message Set" if str(chat_id) in data["messages"] else "✉️ No Message Set"
-    
     return {"inline_keyboard": [
         [{"text": "🚀 Start Mass DM Campaign", "callback_data": "start_dm"}],
         [{"text": "✉️ Set Message", "callback_data": "set_msg"}, {"text": "📋 Preview Message", "callback_data": "preview_msg"}],
@@ -85,8 +83,8 @@ def send_tg_msg(chat_id, text, reply_markup=None):
     if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
     return requests.post(URL + 'sendMessage', json=payload).json()
 
-# THREAD-SAFE ASYNCIO ISOLATION ENGINE TO ELIMINATE LOOP CHANGED ERRORS
-def run_isolated_async(coro):
+# BULLETPROOF BACKGROUND COROUTINE EXECUTOR
+def force_run_async(coro):
     def worker():
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -97,7 +95,9 @@ def run_isolated_async(coro):
     Thread(target=worker).start()
 
 async def init_telethon_login(chat_id, phone):
-    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    # Setting an isolated event loop inside the async execution block explicitly
+    loop = asyncio.get_event_loop()
+    client = TelegramClient(StringSession(), API_ID, API_HASH, loop=loop)
     await client.connect()
     try:
         send_code = await client.send_code_request(phone)
@@ -128,7 +128,9 @@ async def verify_telethon_otp(chat_id, otp):
     except Exception as e:
         send_tg_msg(chat_id, f"❌ Code Error: {str(e)}")
     finally:
-        if user_states.get(chat_id) != 'expecting_2fa': await client.disconnect()
+        if user_states.get(chat_id) != 'expecting_2fa':
+            try: await client.disconnect()
+            except: pass
 
 async def verify_telethon_2fa(chat_id, password):
     data = active_clients.get(chat_id)
@@ -146,7 +148,8 @@ async def verify_telethon_2fa(chat_id, password):
     except Exception as e:
         send_tg_msg(chat_id, f"❌ 2FA Incorrect: {str(e)}")
     finally:
-        await client.disconnect()
+        try: await client.disconnect()
+        except: pass
 
 async def start_mass_dm_task(chat_id, usernames, message_text):
     db = load_data()
@@ -159,7 +162,8 @@ async def start_mass_dm_task(chat_id, usernames, message_text):
     for target in usernames:
         if not target.strip(): continue
         s_info = user_sessions[idx % len(user_sessions)]
-        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH)
+        loop = asyncio.get_event_loop()
+        client = TelegramClient(StringSession(s_info["session"]), API_ID, API_HASH, loop=loop)
         await client.connect()
         try:
             await client.send_message(target.strip(), message_text)
@@ -167,7 +171,8 @@ async def start_mass_dm_task(chat_id, usernames, message_text):
         except:
             db["stats"]["failed"] += 1
         finally:
-            await client.disconnect()
+            try: await client.disconnect()
+            except: pass
         idx += 1
         await asyncio.sleep(2)
     save_data(db)
@@ -205,13 +210,13 @@ def process_update(update):
                 if chat_id in user_states:
                     state = user_states[chat_id]
                     if state == 'expecting_phone':
-                        run_isolated_async(init_telethon_login(chat_id, text.strip()))
+                        force_run_async(init_telethon_login(chat_id, text.strip()))
                         return
                     elif state == 'expecting_otp':
-                        run_isolated_async(verify_telethon_otp(chat_id, text.strip()))
+                        force_run_async(verify_telethon_otp(chat_id, text.strip()))
                         return
                     elif state == 'expecting_2fa':
-                        run_isolated_async(verify_telethon_2fa(chat_id, text.strip()))
+                        force_run_async(verify_telethon_2fa(chat_id, text.strip()))
                         return
                     elif state == 'expecting_utr':
                         payment_tracking[chat_id]['utr'] = text.strip()
@@ -239,7 +244,7 @@ def process_update(update):
                         db = load_data()
                         campaign_msg = db["messages"].get(str(chat_id), "")
                         user_states.pop(chat_id, None)
-                        run_isolated_async(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
+                        force_run_async(start_mass_dm_task(chat_id, text.splitlines(), campaign_msg))
                         return
 
             if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
