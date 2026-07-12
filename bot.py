@@ -1,210 +1,223 @@
 import os
-import json
-import time
-import requests
-from flask import Flask
-from threading import Thread
+import asyncio
+from telethon import TelegramClient
+from telethon.errors import SessionPasswordNeededError, FloodWaitError
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-app = Flask('')
+# --- CONFIGURATION (Aapke Credentials Yahan Add Kar Diye Hain) ---
+API_ID = 32566844  
+API_HASH = '388dd8fd8f08eb03ca2574936c392a4e'  
+BOT_TOKEN = '8896611056:AAF9tGjzZ3i7UMZHgT9bbzGG2Ql_JLJ-i2U'  
 
-@app.route('/')
-def home():
-    return "Kunwar Zerox Pure Engine Live!", 200
+bot = telebot.TeleBot(BOT_TOKEN, parse_mode="Markdown")
 
-# ================== CONFIGURATION ==================
-TOKEN = '8448000628:AAFW2q8KOvK5T_1jPRP03BfwlsZf_ebSGH4'
-URL = f'https://api.telegram.org/bot{TOKEN}/'
-ADMIN_ID = 6752542323
-DATA_FILE = 'premium_db.json'
-# ===================================================
+# Temporary in-memory storage
+user_steps = {}
+user_sessions = {}  
+active_campaigns = {} 
 
-user_states = {}
-processed_updates = set()
-user_click_locks = {}
-http_session = requests.Session()
+# --- KEYBOARDS ---
+def get_main_menu():
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("💎 START MASS DM CAMPAIGN", callback_data="start_campaign"),
+        InlineKeyboardButton("🚀 FAST Auto-Forward DM", callback_data="auto_forward")
+    )
+    markup.add(
+        InlineKeyboardButton("👥 Scrape Group", callback_data="scrape"),
+        InlineKeyboardButton("🤝 Invite & Earn", callback_data="invite")
+    )
+    markup.add(
+        InlineKeyboardButton("🎀 VIP Premium", callback_data="vip"),
+        InlineKeyboardButton("👤 My Account", callback_data="account")
+    )
+    markup.add(
+        InlineKeyboardButton("🟢 Add Session", callback_data="add_session"),
+        InlineKeyboardButton("🔴 Remove Session", callback_data="remove_session")
+    )
+    markup.add(
+        InlineKeyboardButton("🚀 Tutorial & Terms", callback_data="tutorial"),
+        InlineKeyboardButton("💰 Contact Support", callback_data="support")
+    )
+    return markup
 
-def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"premium": {}, "sessions": {}, "messages": {}, "stats": {"sent": 0, "failed": 0}, "upi": "sapna513@ptaxis"}
-    try:
-        with open(DATA_FILE, 'r') as f: return json.load(f)
-    except:
-        return {"premium": {}, "sessions": {}, "messages": {}, "stats": {"sent": 0, "failed": 0}, "upi": "sapna513@ptaxis"}
+# --- HANDLERS ---
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    chat_id = message.chat.id
+    welcome_text = (
+        "✨ *Shub DMs Bot* ✨\n"
+        "_Premium Mass DM & Marketing Automation_\n\n"
+        "Welcome to the most advanced and secure Telegram automation engine. "
+        "Maximize your outreach with zero ban risk, utilizing our high-speed smart nodes.\n\n"
+        f"👤 *User Profile:* {message.from_user.first_name}\n"
+        f"🆔 *Account ID:* `{chat_id}`\n"
+        "👑 *Server Node:* 🟢 100% Online\n\n"
+        "✅ Expand your audience securely!\n"
+        "🎁 Claim your *20 Free DMs* trial today."
+    )
+    bot.send_message(chat_id, welcome_text, reply_markup=get_main_menu())
 
-def save_data(data):
-    try:
-        with open(DATA_FILE, 'w') as f: json.dump(data, f, indent=4)
-    except: pass
-
-def check_premium(chat_id):
-    if int(chat_id) == int(ADMIN_ID): return True
-    data = load_data()
-    if str(chat_id) in data["premium"]:
-        if data["premium"][str(chat_id)] > int(time.time()): return True
-    return False
-
-def make_premium(chat_id, days):
-    data = load_data()
-    expiry = int(time.time()) + (int(days) * 86400)
-    data["premium"][str(chat_id)] = expiry
-    save_data(data)
-
-def get_main_menu(chat_id):
-    data = load_data()
-    msg_status = "✅ Active" if str(chat_id) in data["messages"] else "❌ Not Set"
-    return {"inline_keyboard": [
-        [{"text": "🚀 Start Mass DM Campaign", "callback_data": "start_dm_options"}],
-        [{"text": "✉️ Set Message", "callback_data": "set_msg"}, {"text": "📋 Preview Message", "callback_data": "preview_msg"}],
-        [{"text": "📊 My Stats", "callback_data": "my_stats"}, {"text": "👤 My Account", "callback_data": "my_account"}],
-        [{"text": "👑 VIP Premium", "callback_data": "premium_plans"}],
-        [{"text": "➕ Add Account", "callback_data": "add_session"}, {"text": "➖ Remove Account", "callback_data": "logout_session"}],
-        [{"text": f"Campaign Text Status: {msg_status}", "callback_data": "none"}]
-    ]}
-
-def get_premium_menu():
-    return {"inline_keyboard": [
-        [{"text": "⚡ 1 Day Access — ₹20", "callback_data": "pay_1d"}, {"text": "💥 3 Days Access — ₹50", "callback_data": "pay_3d"}],
-        [{"text": "🔥 15 Days Access — ₹100", "callback_data": "pay_15d"}, {"text": "👑 1 Month Access — ₹150", "callback_data": "pay_1m"}],
-        [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
-    ]}
-
-def get_target_selection_menu():
-    return {"inline_keyboard": [
-        [{"text": "📝 Target Usernames List", "callback_data": "target_by_list"}],
-        [{"text": "📥 Request Channel / Group", "callback_data": "target_by_requests"}],
-        [{"text": "⬅️ Back to Menu", "callback_data": "back_to_menu"}]
-    ]}
-
-def answer_callback(callback_query_id):
-    try: http_session.post(URL + 'answerCallbackQuery', json={'callback_query_id': callback_query_id})
-    except: pass
-
-def send_tg_msg(chat_id, text, reply_markup=None):
-    payload = {'chat_id': chat_id, 'text': text, 'parse_mode': 'Markdown'}
-    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
-    try: return http_session.post(URL + 'sendMessage', json=payload).json()
-    except: return {}
-
-def edit_tg_msg(chat_id, message_id, text, reply_markup=None):
-    payload = {'chat_id': chat_id, 'message_id': message_id, 'text': text, 'parse_mode': 'Markdown'}
-    if reply_markup: payload['reply_markup'] = json.dumps(reply_markup)
-    try: http_session.post(URL + 'editMessageText', json=payload)
-    except: pass
-
-def process_update(update):
-    try:
-        update_id = update.get("update_id")
-        if not update_id or update_id in processed_updates:
+@bot.callback_query_handler(func=lambda call: True)
+def callback_query(call):
+    chat_id = call.message.chat.id
+    
+    if call.data == "add_session":
+        bot.send_message(chat_id, "🐱 *Session Generator*\nPlease enter your Telegram Phone Number with country code.\nExample: `+919876543210`")
+        user_steps[chat_id] = "WAITING_PHONE"
+        
+    elif call.data == "start_campaign":
+        if chat_id not in user_sessions or not user_sessions[chat_id].get('connected'):
+            bot.send_message(chat_id, "❌ Please add a session/account first using 'Add Session' button.")
             return
-        processed_updates.add(update_id)
+        bot.send_message(chat_id, "👉 *Please send your Target Channel/Group Link.*\nExample: `https://t.me/example`")
+        user_steps[chat_id] = "WAITING_TARGET"
+        
+    elif call.data == "vip":
+        vip_text = (
+            "👑 *VIP Subscription Plans*\n\n"
+            "*1 Day:* ₹19 | $\n"
+            "*3 Days:* ₹29 | $\n"
+            "*7 Days:* ₹39 | $\n"
+            "*1 Month:* ₹50 | $\n\n"
+            "Select a plan to purchase:"
+        )
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("💞 1 Day Plan", callback_data="pay_1"),
+            InlineKeyboardButton("💞 3 Days Plan", callback_data="pay_3"),
+            InlineKeyboardButton("💞 7 Days Plan", callback_data="pay_7"),
+            InlineKeyboardButton("💞 1 Month Plan", callback_data="pay_30")
+        )
+        markup.add(InlineKeyboardButton("🚫 Back", callback_data="back_main"))
+        bot.edit_message_text(vip_text, chat_id, call.message.message_id, reply_markup=markup)
+        
+    elif call.data == "back_main":
+        send_welcome(call.message)
 
-        if "message" in update:
-            msg = update["message"]
-            chat_id = msg["chat"]["id"]
-            if "text" in msg:
-                text = msg["text"].strip()
-                if text == "/start":
-                    user_states.pop(chat_id, None)
-                    send_tg_msg(chat_id, "✨ **KUNWAR DMS ULTIMATE BOT** ✨\n\nWelcome to elite automation control panel.", get_main_menu(chat_id))
-                    return
-                elif text.startswith("/approve "):
-                    if int(chat_id) != int(ADMIN_ID): return
-                    parts = text.split(" ")
-                    make_premium(int(parts[1]), int(parts[2]))
-                    send_tg_msg(ADMIN_ID, f"✅ Approved {parts[1]}")
-                    send_tg_msg(int(parts[1]), "🎉 Your Premium Plan Activated!")
-                    return
-
-                if chat_id in user_states:
-                    state = user_states[chat_id]
-                    if state == 'expecting_msg_text':
-                        db = load_data()
-                        db["messages"][str(chat_id)] = text
-                        save_data(db)
-                        user_states.pop(chat_id, None)
-                        send_tg_msg(chat_id, "✅ **Message Saved Successfully!**", get_main_menu(chat_id))
-                        return
-                    elif state == 'expecting_phone':
-                        user_states.pop(chat_id, None)
-                        send_tg_msg(chat_id, "⚙️ Connecting engine to request fresh session OTP layer...")
-                        # Standard raw configuration route
-                        send_tg_msg(chat_id, "📩 **OTP Request Sent!** Ek baar fresh app log check karke enter karein:")
-                        return
-
-            if "photo" in msg and chat_id in user_states and user_states[chat_id] == 'expecting_screenshot':
-                photo_id = msg["photo"][-1]["file_id"]
-                user_states.pop(chat_id, None)
-                send_tg_msg(chat_id, "✅ Screenshot verified! Wait for admin approval.")
-                admin_msg = f"🔔 **NEW PREMIUM REQUEST**\nID: `{chat_id}`\n\n`/approve {chat_id} 30`"
-                http_session.post(URL + 'sendPhoto', json={'chat_id': ADMIN_ID, 'photo': photo_id, 'caption': admin_msg})
-                return
-
-        elif "callback_query" in update:
-            cq = update["callback_query"]
-            chat_id = cq["message"]["chat"]["id"]
-            msg_id = cq["message"]["message_id"]
-            data = cq["data"]
-            cq_id = cq["id"]
-            db = load_data()
-
-            answer_callback(cq_id)
-
-            # Strict Click Interval Barrier
-            current_time = time.time()
-            if chat_id in user_click_locks and (current_time - user_click_locks[chat_id]) < 2.0:
-                return
-            user_click_locks[chat_id] = current_time
-
-            if data == "set_msg":
-                user_states[chat_id] = 'expecting_msg_text'
-                send_tg_msg(chat_id, "📝 Send your message text for campaign:")
-            elif data == "preview_msg":
-                msg_text = db["messages"].get(str(chat_id), "❌ No message set yet.")
-                send_tg_msg(chat_id, f"📋 **Your Message:**\n\n{msg_text}")
-            elif data == "my_stats":
-                send_tg_msg(chat_id, f"📊 Sent: {db['stats']['sent']} | Failed: {db['stats']['failed']}")
-            elif data == "my_account":
-                status = "👑 VIP Premium Active" if check_premium(chat_id) else "❌ Free Tier"
-                count = len(db["sessions"].get(str(chat_id), []))
-                send_tg_msg(chat_id, f"👤 Status: {status}\nLinked Accounts: {count}")
-            elif data == "premium_plans":
-                edit_tg_msg(chat_id, msg_id, "👑 **VIP Premium Plans**", get_premium_menu())
-            elif data in ["pay_1d", "pay_3d", "pay_15d", "pay_1m"]:
-                edit_tg_msg(chat_id, msg_id, f"💳 UPI ID: `{db['upi']}`\n\nSend payment and send screenshot below.")
-                user_states[chat_id] = 'expecting_screenshot'
-            elif data == "add_session":
-                if not check_premium(chat_id):
-                    send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
-                    return
-                user_states[chat_id] = 'expecting_phone'
-                send_tg_msg(chat_id, "📱 Enter phone number with country code:")
-            elif data == "start_dm_options":
-                if not check_premium(chat_id):
-                    send_tg_msg(chat_id, "❌ **Access Denied!** Premium subscription required.")
-                    return
-                if str(chat_id) not in db["messages"]:
-                    send_tg_msg(chat_id, "⚠️ Please 'Set Message' first.")
-                    return
-                edit_tg_msg(chat_id, msg_id, "🎯 **Select Target Type:**", get_target_selection_menu())
-            elif data == "back_to_menu":
-                user_states.pop(chat_id, None)
-                edit_tg_msg(chat_id, msg_id, "✨ *MAIN PANEL* ✨", get_main_menu(chat_id))
-    except: pass
-
-def run_bot_loop():
-    http_session.get(URL + 'deleteWebhook')
-    offset = 0
-    while True:
+# --- TEXT INPUT FLOW ---
+@bot.message_handler(func=lambda message: message.chat.id in user_steps)
+def handle_inputs(message):
+    chat_id = message.chat.id
+    step = user_steps.get(chat_id)
+    
+    if step == "WAITING_PHONE":
+        phone = message.text.strip()
+        user_sessions[chat_id] = {'phone': phone}
+        
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        client = TelegramClient(f"session_{chat_id}", API_ID, API_HASH)
+        loop.run_until_complete(client.connect())
+        
         try:
-            r = http_session.get(URL + 'getUpdates', params={'offset': offset, 'timeout': 5}).json()
-            if "result" in r:
-                for u in r["result"]:
-                    offset = u["update_id"] + 1
-                    process_update(u)
-        except: pass
-        time.sleep(1)
+            sent_code = loop.run_until_complete(client.send_code_request(phone))
+            user_sessions[chat_id]['client'] = client
+            user_sessions[chat_id]['phone_code_hash'] = sent_code.phone_code_hash
+            
+            bot.send_message(chat_id, "📩 *OTP Sent Successfully!*\n\n✅ *Send with spaces:* e.g., `1 2 3 4 5`")
+            user_steps[chat_id] = "WAITING_OTP"
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ Error sending OTP: {str(e)}")
+            user_steps.pop(chat_id, None)
 
-if __name__ == '__main__':
-    Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000))), daemon=True).start()
-    print("🚀 Stable Pure Engine Online...")
-    run_bot_loop()
+    elif step == "WAITING_OTP":
+        otp = message.text.replace(" ", "").strip()
+        session_data = user_sessions.get(chat_id)
+        client = session_data['client']
+        phone = session_data['phone']
+        phone_code_hash = session_data['phone_code_hash']
+        
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(client.sign_in(phone, otp, phone_code_hash=phone_code_hash))
+            bot.send_message(chat_id, "✅ *Session Added Successfully!*\nRedirecting to Main Menu...")
+            user_sessions[chat_id]['connected'] = True
+            user_steps.pop(chat_id, None)
+        except SessionPasswordNeededError:
+            bot.send_message(chat_id, "🔒 *Enter your 2FA Password:*")
+            user_steps[chat_id] = "WAITING_2FA"
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ OTP verification failed: {str(e)}")
+            user_steps.pop(chat_id, None)
+
+    elif step == "WAITING_2FA":
+        password = message.text.strip()
+        session_data = user_sessions.get(chat_id)
+        client = session_data['client']
+        
+        loop = asyncio.get_event_loop()
+        try:
+            loop.run_until_complete(client.sign_in(password=password))
+            bot.send_message(chat_id, "✅ *Session Added Successfully!*\nRedirecting to Main Menu...")
+            user_sessions[chat_id]['connected'] = True
+            user_steps.pop(chat_id, None)
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ 2FA Password Wrong: {str(e)}")
+            user_steps.pop(chat_id, None)
+
+    elif step == "WAITING_TARGET":
+        target = message.text.strip()
+        user_sessions[chat_id]['target'] = target
+        bot.send_message(chat_id, "🔢 *How many DMs do you want to send?* (Send a number)")
+        user_steps[chat_id] = "WAITING_COUNT"
+        
+    elif step == "WAITING_COUNT":
+        try:
+            count = int(message.text.strip())
+            session_data = user_sessions.get(chat_id)
+            target = session_data['target']
+            
+            bot.send_message(chat_id, f"✅ *Campaign Setup Complete!*\nThe bot will handle the rest in the background. Total targets: `{count}`")
+            user_steps.pop(chat_id, None)
+            
+            asyncio.run(run_mass_dm_campaign(chat_id, target, count))
+        except ValueError:
+            bot.send_message(chat_id, "❌ Please enter a valid number.")
+
+# --- BACKGROUND AUTOMATION ENGINE ---
+async def run_mass_dm_campaign(chat_id, target, total_count):
+    session_data = user_sessions.get(chat_id)
+    client = session_data['client']
+    
+    try:
+        entity = await client.get_entity(target)
+        participants = await client.get_participants(entity, limit=total_count)
+    except Exception as e:
+        bot.send_message(chat_id, f"❌ Scraping Failed: {str(e)}")
+        return
+
+    bot.send_message(chat_id, f"💎 *Mass DM Started!*\n\n🎯 Target: {target}\n📊 Limit: {total_count}\n🔄 Sessions: 1\n🟢 Filter: All Pending Users")
+    
+    sent = 0
+    failed = 0
+    dm_text = "Hello! Join our official channel for latest updates."
+
+    for user in participants:
+        if user.bot:
+            continue
+        try:
+            await client.send_message(user.id, dm_text)
+            sent += 1
+            await asyncio.sleep(15) # Anti-ban delay
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds)
+        except Exception:
+            failed += 1
+            
+    report = (
+        "📊 *Post-Campaign Analytics Report*\n\n"
+        f"🎯 Target: {target}\n"
+        f"✅ Successfully Queued/Sent: {sent}\n"
+        f"❌ Failed Blocks: {failed}\n\n"
+        "🚪 *Security:* _Your Telegram session remains active securely._"
+    )
+    bot.send_message(chat_id, report)
+
+# --- START BOT ---
+if __name__ == "__main__":
+    print("🤖 Bot is pooling...")
+    bot.infinity_polling()
+        
