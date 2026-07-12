@@ -1,4 +1,4 @@
-flask
-telethon
-requests
-nest_asyncio
+telethon==2.4.0
+pyTelegramBotAPI==4.26.0
+Flask==3.0.3
+gunicorn==22.0.0
