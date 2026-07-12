@@ -1,4 +1,4 @@
+aiogram==3.13.1
 telethon==2.4.0
-pyTelegramBotAPI==4.26.0
-Flask==3.0.3
-gunicorn==22.0.0
+hypercorn==0.17.3
+quart==0.19.6
